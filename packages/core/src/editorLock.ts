@@ -16,8 +16,12 @@ export class EditorLockSnapshot {
     const snapshot = new EditorLockSnapshot();
     await Promise.all(
       filePaths.map(async (filePath) => {
-        const stats = await stat(filePath);
-        snapshot.mtimes.set(filePath, stats.mtimeMs);
+        // A file that isn't there is recorded as -1 rather than throwing:
+        // capture() runs on the failure path of commit() too, and must not
+        // mask the real error. -1 never matches a real mtime, so a file that
+        // reappears still reads as drift.
+        const stats = await stat(filePath).catch(() => null);
+        snapshot.mtimes.set(filePath, stats?.mtimeMs ?? -1);
       })
     );
     return snapshot;

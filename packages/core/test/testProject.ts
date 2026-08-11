@@ -14,6 +14,13 @@ export async function makeTestProject(): Promise<{ dir: string; cleanup: () => P
   const dir = await mkdtemp(path.join(tmpdir(), 'rmmz-session-test-'));
   await cp(FIXTURE, dir, { recursive: true });
   await execFileAsync('git', ['init'], { cwd: dir });
+  // Repo-local identity/signing, so both this commit and the ones GitRepo makes
+  // during a test work anywhere: CI runners have no global git identity (commit
+  // fails with "please tell me who you are"), and a dev machine with
+  // commit.gpgsign=true would block on a passphrase prompt.
+  await execFileAsync('git', ['config', 'user.name', 'rmmz-kit test'], { cwd: dir });
+  await execFileAsync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: dir });
+  await execFileAsync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
   await execFileAsync('git', ['add', '-A'], { cwd: dir });
   await execFileAsync('git', ['commit', '-m', 'initial fixture'], { cwd: dir });
   return {

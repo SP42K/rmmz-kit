@@ -50,6 +50,12 @@ export class ProjectSession {
     const dataDir = path.join(rootPath, 'data');
     const fileNames = await listDataFiles(rootPath);
 
+    // Snapshot mtimes *before* reading, not after: reading a full project is
+    // hundreds of files and takes real time. Capturing afterwards would record
+    // the post-write mtime of a file the editor saved mid-read while we hold
+    // its pre-write content — drift we could never detect, and would clobber.
+    const lockSnapshot = await EditorLockSnapshot.capture(fileNames.map((name) => path.join(dataDir, name)));
+
     const files = new Map<string, unknown>();
     const originalText = new Map<string, string>();
     for (const name of fileNames) {
@@ -58,7 +64,6 @@ export class ProjectSession {
       files.set(name, parseJson(text));
     }
 
-    const lockSnapshot = await EditorLockSnapshot.capture(fileNames.map((name) => path.join(dataDir, name)));
     const git = new GitRepo(rootPath);
 
     return new ProjectSession(rootPath, dataDir, files, originalText, new Set(), lockSnapshot, git, {
@@ -131,24 +136,32 @@ export class ProjectSession {
       return null;
     }
 
-    const writtenPaths: string[] = [];
-    for (const name of this.dirty) {
-      const filePath = path.join(this.dataDir, name);
-      const text = stringifyCompact(this.files.get(name));
-      await atomicWriteFile(filePath, text);
-      this.originalText.set(name, text);
-      writtenPaths.push(filePath);
-    }
-    this.dirty.clear();
+    const written = new Map<string, string>();
+    try {
+      for (const name of this.dirty) {
+        const text = stringifyCompact(this.files.get(name));
+        await atomicWriteFile(path.join(this.dataDir, name), text);
+        written.set(name, text);
+      }
 
-    let hash: string | null = null;
-    if (await this.git.isRepo()) {
-      await this.git.add(writtenPaths);
-      hash = await this.git.commit(message);
+      if (await this.git.isRepo()) {
+        await this.git.add([...written.keys()].map((name) => path.join(this.dataDir, name)));
+        return await this.git.commit(message);
+      }
+      return null;
+    } finally {
+      // Reconcile with whatever actually landed, even on a partial write or a
+      // failed git call. Our own writes moved those files' mtimes: leaving the
+      // snapshot stale would make every later validate() report the session's
+      // own writes as external editor drift, permanently wedging the session.
+      for (const [name, text] of written) {
+        this.originalText.set(name, text);
+        this.dirty.delete(name);
+      }
+      this.lockSnapshot = await EditorLockSnapshot.capture(
+        this.listFiles().map((name) => path.join(this.dataDir, name))
+      );
     }
-
-    this.lockSnapshot = await EditorLockSnapshot.capture(this.listFiles().map((name) => path.join(this.dataDir, name)));
-    return hash;
   }
 }
 
