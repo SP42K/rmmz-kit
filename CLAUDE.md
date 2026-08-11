@@ -171,9 +171,11 @@ decision A (MCP is a thin transport over real logic, not the other way around).
 
 `apply_script` and `upsert_map_event` are deliberately split: `upsert_map_event` is a full-replace
 declarative write of one event's metadata + pages (conditions/trigger/image — nothing that makes
-sense read independently), always leaving a page's command `list` empty; `apply_script` is the only
+sense read independently); `apply_script` is the only
 thing that ever writes `list`, compiling a DSL string through `@rmmz-kit/compiler`. Structure and
-behavior stay separately editable this way. `upsert_database` is the opposite: a shallow merge onto
+behavior stay separately editable this way — which is why "full replace" stops at the page's `list`:
+page N inherits the list of the page N it replaced (a new page starts empty), so
+`upsert_map_event` to move an NPC one tile can't silently delete its dialogue. `upsert_database` is the opposite: a shallow merge onto
 whatever row already has that id (or a new row via `IdAllocator.allocEntityId`), since Actor/Item/
 .../Troop fields don't have the same "only makes sense together" coupling a page's fields do — and
 per-table Zod schemas for all ten tables is exactly the upfront modeling §4.5 says not to build

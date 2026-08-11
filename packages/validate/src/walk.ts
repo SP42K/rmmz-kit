@@ -67,7 +67,11 @@ export function forEachCommandList(session: ProjectSession, fn: (ctx: ListContex
         eventId: ce.id,
         eventName: ce.name,
         path: `commonEvent ${ce.id} (${ce.name})`,
-        list: ce.list,
+        // A row can legitimately lack `list` — MCP's upsert_database writes a
+        // partial row, and hand-edited projects happen. Default here rather
+        // than in each rule: every rule routes through this one function, and
+        // without it they all die on `undefined.forEach`.
+        list: ce.list ?? [],
         kind: 'commonEvent',
       });
     }

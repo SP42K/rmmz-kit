@@ -25,6 +25,34 @@ describe('tools', () => {
     expect(map.events[2]?.pages[0].trigger).toBe(0);
   });
 
+  it('upsertMapEvent replacing an existing event keeps each page\'s command list', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const before = session.readFile<MapData>('Map001.json').events[1]!;
+    const originalList = before.pages[0].list;
+    expect(originalList.length).toBeGreaterThan(1); // fixture event 1 has a real script
+
+    tools.upsertMapEvent(session, 1, { id: 1, name: before.name, x: 9, y: 9, pages: [{}] });
+
+    const after = session.readFile<MapData>('Map001.json').events[1]!;
+    expect(after.x).toBe(9);
+    expect(after.pages[0].list).toEqual(originalList); // moving an NPC must not delete its dialogue
+  });
+
+  it('upsertMapEvent rejects an unknown conditions/image field instead of writing it as junk', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    // `switchId` is the plausible near-miss for MZ's `switch1Id`; silently
+    // merged it would leave switch1Valid false and the page always active.
+    expect(() =>
+      tools.upsertMapEvent(session, 1, { x: 0, y: 0, pages: [{ conditions: { switchId: 5 } as never }] })
+    ).toThrow(/Unknown page condition field: switchId/);
+  });
+
   it('applyScript compiles DSL and writes it as the target page\'s command list', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
@@ -81,6 +109,19 @@ describe('tools', () => {
     cleanups.push(cleanup);
     const session = await openProject(dir);
     expect(() => tools.upsertDatabase(session, 'nope', [{}])).toThrow(/Unknown database table/);
+  });
+
+  it('upsertDatabase rejects an out-of-range id instead of corrupting the table', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    // 0 would overwrite the leading null MZ requires; -1 and 1.5 become
+    // non-index properties JSON.stringify drops, i.e. a reported-but-absent write.
+    for (const id of [0, -1, 1.5]) {
+      expect(() => tools.upsertDatabase(session, 'items', [{ id, name: 'Bad' }])).toThrow(/must be integers >= 1/);
+    }
+    expect(session.readFile<Array<Item | null>>('Items.json')[0]).toBeNull();
   });
 
   it('allocateNamespace hands out contiguous named switch/variable ids', async () => {

@@ -1,9 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProjectSession, SystemData, MapData } from '@rmmz-kit/core';
+import { mapFileName } from '@rmmz-kit/core';
 import { decompile, printDsl } from '@rmmz-kit/compiler';
 import { DATABASE_TABLES } from './tables.js';
-import { mapFileName } from './mapFile.js';
 
 /**
  * MCP resources (plan §4.5 "讀"). Pure functions over a ProjectSession, kept
@@ -12,8 +12,11 @@ import { mapFileName } from './mapFile.js';
  */
 
 export function projectSummary(session: ProjectSession): unknown {
-  const system = session.listFiles().includes('System.json') ? session.readFile<SystemData>('System.json') : undefined;
-  const maps = session.listFiles().includes('MapInfos.json')
+  // listFiles() rebuilds the whole filename array per call; this asks it a
+  // dozen times (once per DATABASE_TABLES entry), so snapshot it once.
+  const files = new Set(session.listFiles());
+  const system = files.has('System.json') ? session.readFile<SystemData>('System.json') : undefined;
+  const maps = files.has('MapInfos.json')
     ? session
         .readFile<Array<{ id: number; name: string } | null>>('MapInfos.json')
         .filter((m): m is { id: number; name: string } => m != null)
@@ -21,7 +24,7 @@ export function projectSummary(session: ProjectSession): unknown {
 
   const tables: Record<string, number> = {};
   for (const [table, file] of Object.entries(DATABASE_TABLES)) {
-    if (!session.listFiles().includes(file)) continue;
+    if (!files.has(file)) continue;
     const count = session.readFile<Array<unknown | null>>(file).filter((e) => e != null).length;
     tables[table] = count;
   }

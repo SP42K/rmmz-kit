@@ -22,8 +22,9 @@ export function createServer(session: ProjectSession): McpServer {
   return server;
 }
 
-function json(text: unknown, isError = false): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(text, null, 2) }], isError };
+/** Errors are never built by hand here — handlers throw and the SDK turns that into an isError result. */
+function json(text: unknown): CallToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(text, null, 2) }] };
 }
 
 function registerResources(server: McpServer, session: ProjectSession): void {
@@ -67,7 +68,15 @@ function registerResources(server: McpServer, session: ProjectSession): void {
 }
 
 const ScriptTargetSchema = z.union([
-  z.object({ map: z.number().int(), event: z.number().int(), page: z.number().int() }).strict(),
+  z
+    .object({
+      map: z.number().int(),
+      event: z.number().int(),
+      // 1-based, unlike the 0-indexed `pages` array the rmmz://map/{id} resource
+      // returns — say so, or every caller burns a round trip discovering it.
+      page: z.number().int().min(1).describe('1-based page number: the first page is 1, not 0'),
+    })
+    .strict(),
   z.object({ commonEvent: z.number().int() }).strict(),
 ]);
 
@@ -103,7 +112,8 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   server.registerTool(
     'upsert_map_event',
     {
-      description: 'Create or fully replace a map event\'s metadata and pages (not its command lists — use apply_script for those).',
+      description:
+        'Create or fully replace a map event\'s metadata and pages. Command lists are left alone — an existing page keeps its, a new page starts empty; use apply_script to write them.',
       inputSchema: {
         mapId: z.number().int(),
         id: z.number().int().optional(),

@@ -28,6 +28,11 @@ export async function assertProjectRoot(dirPath: string): Promise<void> {
   }
 }
 
+/** `1` -> `Map001.json`. Zero-padded to 3 digits, which is what the editor writes (ids past 999 just get longer). */
+export function mapFileName(id: number): string {
+  return `Map${String(id).padStart(3, '0')}.json`;
+}
+
 export async function listDataFiles(dirPath: string): Promise<string[]> {
   const dataDir = path.join(dirPath, 'data');
   const entries = await readdir(dataDir);

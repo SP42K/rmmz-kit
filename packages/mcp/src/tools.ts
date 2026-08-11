@@ -5,13 +5,13 @@ import type {
   EventPage,
   EventConditions,
   EventImage,
+  EventCommand,
   CommonEvent,
 } from '@rmmz-kit/core';
-import { IdAllocator } from '@rmmz-kit/core';
+import { IdAllocator, mapFileName } from '@rmmz-kit/core';
 import { compile, parseDsl } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
 import { DATABASE_TABLES } from './tables.js';
-import { mapFileName } from './mapFile.js';
 
 /**
  * MCP write/transaction tools (plan §4.5). Each is a plain function over a
@@ -61,6 +61,24 @@ const DEFAULT_CONDITIONS: EventConditions = {
 
 const DEFAULT_IMAGE: EventImage = { tileId: 0, characterName: '', characterIndex: 0, direction: 2, pattern: 0 };
 
+/**
+ * Merge onto the defaults, rejecting keys they don't have. The MCP schema types
+ * `conditions`/`image` as open records (a hand-written per-field zod schema for
+ * each is the upfront modeling §4.5 says to skip), so without this a plausible
+ * near-miss like `switchId` for `switch1Id` lands in data/*.json as a junk key:
+ * the condition silently never applies and nothing — zod, validateProject,
+ * commit — reports it. Checked here, not in server.ts, so direct API callers
+ * get the same guard.
+ */
+function mergeKnown<T extends object>(defaults: T, overrides: Partial<T> | undefined, what: string): T {
+  for (const key of Object.keys(overrides ?? {})) {
+    if (!(key in defaults)) {
+      throw new Error(`Unknown ${what} field: ${key}. Known fields: ${Object.keys(defaults).join(', ')}`);
+    }
+  }
+  return { ...defaults, ...overrides };
+}
+
 export interface PageSpec {
   conditions?: Partial<EventConditions>;
   /** 0 action button, 1 player touch, 2 event touch, 3 autorun, 4 parallel. */
@@ -83,16 +101,21 @@ export interface MapEventSpec {
   note?: string;
   x: number;
   y: number;
-  /** At least one page; each page's command list starts empty — write it with apply_script. */
+  /**
+   * At least one page. A page's command list is not part of the spec — a page
+   * that already exists keeps its list, a new one starts empty; either way
+   * apply_script is what writes it.
+   */
   pages: PageSpec[];
 }
 
-function buildPage(spec: PageSpec): EventPage {
+/** `list` comes from the page being replaced (if any), never from the spec — see MapEventSpec.pages. */
+function buildPage(spec: PageSpec, list: EventCommand[] | undefined): EventPage {
   return {
-    conditions: { ...DEFAULT_CONDITIONS, ...spec.conditions },
+    conditions: mergeKnown(DEFAULT_CONDITIONS, spec.conditions, 'page condition'),
     directionFix: spec.directionFix ?? false,
-    image: { ...DEFAULT_IMAGE, ...spec.image },
-    list: compile([]),
+    image: mergeKnown(DEFAULT_IMAGE, spec.image, 'page image'),
+    list: list ?? compile([]),
     moveFrequency: spec.moveFrequency ?? 3,
     moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
     moveSpeed: spec.moveSpeed ?? 3,
@@ -110,7 +133,10 @@ function buildPage(spec: PageSpec): EventPage {
  * §4.5's "宣告式" write style) — never a partial merge, since a page's
  * conditions/trigger/image only make sense read together. Command lists are
  * deliberately not part of the spec: apply_script owns `list` so structure
- * (this tool) and behavior (the DSL) stay separately editable.
+ * (this tool) and behavior (the DSL) stay separately editable. That split only
+ * holds if replacing an event *keeps* its lists — otherwise "move this NPC one
+ * tile" silently deletes every line of its dialogue — so page N inherits the
+ * list of the page N it replaced.
  */
 export function upsertMapEvent(session: ProjectSession, mapId: number, spec: MapEventSpec): number {
   let id = spec.id;
@@ -119,13 +145,14 @@ export function upsertMapEvent(session: ProjectSession, mapId: number, spec: Map
       id = 1;
       while (data.events[id]) id++;
     }
+    const previous = data.events[id];
     const event: MapEvent = {
       id,
       name: spec.name ?? `EV${String(id).padStart(3, '0')}`,
       note: spec.note ?? '',
       x: spec.x,
       y: spec.y,
-      pages: spec.pages.map(buildPage),
+      pages: spec.pages.map((page, i) => buildPage(page, previous?.pages[i]?.list)),
     };
     while (data.events.length <= id) data.events.push(null);
     data.events[id] = event;
@@ -154,6 +181,14 @@ export function upsertDatabase(
   session.updateFile<Array<Record<string, unknown> | null>>(file, (data) => {
     for (const entry of entries) {
       const id = entry.id ?? allocator.allocEntityId(file);
+      // MZ tables are 1-indexed behind a mandatory leading null, and the MCP
+      // schema takes entries as open records — so an unchecked id is a silent
+      // corruption either way: id 0 overwrites the sentinel, and a negative or
+      // fractional id becomes a non-index array property that JSON.stringify
+      // drops, leaving us reporting an allocation that was never written.
+      if (!Number.isInteger(id) || id < 1) {
+        throw new Error(`Invalid id ${JSON.stringify(id)} for ${table}: ids must be integers >= 1`);
+      }
       while (data.length <= id) data.push(null);
       data[id] = { ...(data[id] ?? {}), ...entry, id };
       ids.push(id);
