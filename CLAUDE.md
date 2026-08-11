@@ -158,8 +158,12 @@ functions over a `ProjectSession` and are unit-tested without any MCP transport 
 `test/resources.test.ts`). `test/server.test.ts` covers the wiring itself, connecting a real
 `McpServer`/`Client` pair over the SDK's `InMemoryTransport` — including the plan's own M5
 acceptance scenario ("在 Map001 加一個賣藥水的 NPC") end to end over the protocol. `bin.ts` is the
-stdio entry point a client like Claude Desktop launches (`node dist/bin.js <project-path>`, after
-`npm run build`).
+intended stdio entry point for a client like Claude Desktop, but **it does not run yet**: the
+`rmmz-mcp` bin points at `dist/bin.js`, and the compiled output resolves `@rmmz-kit/core` to
+`src/session.js` because workspace `main` fields point at TypeScript sources (the "no build step
+to consume a workspace package" convention above). Making the binary work means `exports` maps
+with a custom condition on all four packages plus `customConditions` in `tsconfig.base.json` —
+deliberately not done, so for now the server is only reachable in-process via `createServer()`.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
