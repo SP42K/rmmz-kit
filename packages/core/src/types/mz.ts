@@ -101,6 +101,100 @@ export interface Enemy {
   note: string;
 }
 
+export interface Class {
+  id: number;
+  name: string;
+  expParams: number[];
+  traits: Trait[];
+  learnings: Learning[];
+  /** [paramId][level] -> value, level is 1-indexed so index 0 is unused. */
+  params: number[][];
+  note: string;
+}
+
+export interface Learning {
+  level: number;
+  skillId: number;
+  note: string;
+}
+
+export interface State {
+  id: number;
+  name: string;
+  iconIndex: number;
+  restriction: number;
+  priority: number;
+  removeAtBattleEnd: boolean;
+  removeByRestriction: boolean;
+  autoRemovalTiming: number;
+  minTurns: number;
+  maxTurns: number;
+  chanceByDamage: number;
+  stepsToRemove: number;
+  removeByWalking: boolean;
+  removeByDamage: boolean;
+  message1: string;
+  message2: string;
+  message3: string;
+  message4: string;
+  motion: number;
+  overlay: number;
+  traits: Trait[];
+  note: string;
+}
+
+export interface Troop {
+  id: number;
+  name: string;
+  members: TroopMember[];
+  pages: TroopPage[];
+}
+
+export interface TroopMember {
+  enemyId: number;
+  x: number;
+  y: number;
+  hidden: boolean;
+}
+
+export interface TroopPage {
+  conditions: TroopPageConditions;
+  span: number;
+  list: EventCommand[];
+}
+
+export interface TroopPageConditions {
+  actorHp: boolean;
+  actorId: number;
+  actorValid: boolean;
+  enemyHp: boolean;
+  enemyIndex: number;
+  enemyValid: boolean;
+  switchId: number;
+  switchValid: boolean;
+  turnA: number;
+  turnB: number;
+  turnEnding: boolean;
+  turnValid: boolean;
+}
+
+export interface CommonEvent {
+  id: number;
+  name: string;
+  trigger: number;
+  switchId: number;
+  list: EventCommand[];
+}
+
+export interface Tileset {
+  id: number;
+  name: string;
+  mode: number;
+  tilesetNames: string[];
+  flags: number[];
+  note: string;
+}
+
 export interface Trait {
   code: number;
   dataId: number;
