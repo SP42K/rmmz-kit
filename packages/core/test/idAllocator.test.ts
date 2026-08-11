@@ -48,6 +48,18 @@ describe('IdAllocator', () => {
     expect(third[0]).toBe(first[0]);
   });
 
+  it('allocating zero (or fewer) ids is a no-op instead of hanging', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const allocator = new IdAllocator(session);
+
+    expect(allocator.allocSwitches('quest.none', 0)).toEqual([]);
+    expect(allocator.allocVariables('quest.none', -1)).toEqual([]);
+    expect(allocator.allocNamespace('quest.none', {})).toEqual({ namespace: 'quest.none', switches: [], variables: [] });
+  });
+
   it('allocEntityId finds the first free hole, else the next id past the end', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
