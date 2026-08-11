@@ -10,7 +10,9 @@ export function printDsl(nodes: Node[]): string {
 function nodeToStep(node: Node): Step {
   switch (node.kind) {
     case 'raw':
-      return { raw: { code: node.code, parameters: node.parameters } };
+      return {
+        raw: { code: node.code, parameters: node.parameters, body: node.body?.map(nodeToStep) },
+      };
 
     case 'text': {
       const say: SayPayload = { text: node.lines.length === 1 ? node.lines[0] : node.lines };
@@ -34,6 +36,15 @@ function nodeToStep(node: Node): Step {
     case 'choice': {
       const branches: Record<string, Step[]> = {};
       node.choices.forEach((label, i) => {
+        // MZ allows two choices to share a label; the DSL keys branches by
+        // label, so writing both would drop a choice *and* its body. Refuse
+        // loudly — printDsl is used to show an agent an existing event, and
+        // handing back a quietly shortened menu is worse than not printing.
+        if (label in branches) {
+          throw new Error(
+            `Show Choices has duplicate label ${JSON.stringify(label)}; the YAML DSL keys branches by label and cannot represent it`
+          );
+        }
         branches[label] = node.branches[i].map(nodeToStep);
       });
       return {

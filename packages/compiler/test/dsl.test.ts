@@ -48,6 +48,46 @@ describe('DSL (YAML)', () => {
     expect(() => parseDsl('- say: { nope: true }')).toThrow();
   });
 
+  it('rejects a mistyped payload key instead of silently dropping its value', () => {
+    // `els` used to be stripped, quietly deleting the whole else branch.
+    expect(() => parseDsl('- if: { switch: 5, then: [{ wait: 1 }], els: [{ wait: 2 }] }')).toThrow();
+    expect(() => parseDsl('- say: { text: hi, speeker: Bob }')).toThrow();
+    expect(() => parseDsl('- choice: { branches: { A: [] }, cancle: [{ wait: 1 }] }')).toThrow();
+  });
+
+  it('defaults a choice to cancel-disallowed, and to the cancel branch only when one is given', () => {
+    // -1 disallows cancel (Window_ChoiceList.isCancelEnabled), -2 allows it and
+    // runs the 403 body; defaulting to -2 with no `cancel:` would let the player
+    // dismiss the menu and skip every branch.
+    const [plain] = parseDsl('- choice: { branches: { A: [], B: [] } }') as [{ cancelType: number }];
+    expect(plain.cancelType).toBe(-1);
+    const [withCancel] = parseDsl('- choice: { branches: { A: [] }, cancel: [{ wait: 1 }] }') as [{ cancelType: number }];
+    expect(withCancel.cancelType).toBe(-2);
+  });
+
+  it('rejects plain-integer choice labels, whose YAML order JS objects do not preserve', () => {
+    expect(() => parseDsl('- choice: { branches: { "10": [], "5": [] } }')).toThrow(/integer/);
+  });
+
+  it('rejects a face index that is not a number rather than writing NaN', () => {
+    expect(() => parseDsl('- say: { text: hi, face: "Actor1/abc" }')).toThrow(/face/);
+  });
+
+  it('refuses to print a Show Choices with duplicate labels rather than dropping a branch', () => {
+    const commands = compile([
+      {
+        kind: 'choice',
+        choices: ['Yes', 'Yes'],
+        cancelType: -1,
+        defaultType: -1,
+        positionType: 2,
+        background: 0,
+        branches: [[{ kind: 'wait', frames: 1 }], [{ kind: 'wait', frames: 2 }]],
+      },
+    ]);
+    expect(() => printDsl(decompile(commands))).toThrow(/duplicate label/);
+  });
+
   it('the raw escape hatch passes through an unmodeled command untouched', () => {
     const nodes = parseDsl('- raw: { code: 357, parameters: ["MyPlugin", "cmd", {}] }');
     expect(compile(nodes)[0]).toEqual({ code: 357, indent: 0, parameters: ['MyPlugin', 'cmd', {}] });

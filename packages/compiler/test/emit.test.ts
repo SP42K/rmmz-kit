@@ -111,6 +111,21 @@ describe('compile', () => {
     ]);
   });
 
+  it('refuses to emit a choice whose branch count does not match its labels', () => {
+    const node: Node = {
+      kind: 'choice',
+      choices: ['Yes'],
+      cancelType: -1,
+      defaultType: -1,
+      positionType: 2,
+      background: 0,
+      branches: [[], []],
+    };
+    // Otherwise the extra 402 gets `[1, undefined]`, and `undefined` in an
+    // array survives JSON.stringify as `null` — corrupt data on disk.
+    expect(() => compile([node])).toThrow(/one-to-one/);
+  });
+
   it('emits setVariable with the constant-operand shape', () => {
     const node: Node = { kind: 'setVariable', from: 3, to: 3, op: 'add', value: 5 };
     expect(compile([node])[0]).toEqual({ code: 122, indent: 0, parameters: [3, 3, 1, 0, 5] });

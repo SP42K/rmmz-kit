@@ -25,11 +25,14 @@ started.
 npm test                                       # all tests (vitest)
 npx vitest run packages/core/test/session.test.ts   # one file
 npx vitest run -t "rollback"                   # one test by name
-npx tsc -p packages/core/tsconfig.json --noEmit # typecheck (what CI runs)
+npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
+npx tsc -p packages/compiler/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
 
-No linter. CI (`.github/workflows/test.yml`) = typecheck + vitest on Node 20.
+No linter. CI (`.github/workflows/test.yml`) = one typecheck per package + vitest on Node 20.
+vitest strips types without checking them, so a new package must add its own `tsc` step there
+or its type errors reach `master` unnoticed.
 
 Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` copies
 `fixtures/minimal-project` to a temp dir and `git init`s it for every test.
@@ -79,7 +82,11 @@ indent+code back into the same tree, falling back to `RawNode` for any code
 or operand shape (e.g. a Control Variables command with a variable operand
 instead of a constant) it doesn't model. This `RawNode` fallback is what
 makes decompiling an arbitrary existing project safe — nothing outside Tier 1
-is ever silently dropped, only left unparsed.
+is ever silently dropped, only left unparsed. `RawNode.body` extends that to
+unmodeled *structural* commands (Battle Processing's 301/601/602/603/604
+indent their branch bodies exactly like 111/411/412): the deeper-indented run
+following a raw command is absorbed as its body, so decompile never has to
+throw on a shape it doesn't understand.
 
 `dsl/` is the YAML authoring surface an LLM/human writes (plan §4.2), a Zod
 schema (`schema.ts`) over a much smaller "Step" shape, `parse.ts` compiling

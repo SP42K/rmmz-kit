@@ -42,6 +42,54 @@ describe('decompile', () => {
     expect(decompile(commands)).toEqual([{ kind: 'raw', code: 357, parameters: ['MyPlugin', 'cmd', {}] }]);
   });
 
+  it('round-trips an unmodeled structural command with an indented body (Battle Processing)', () => {
+    // 301 Battle Processing / 601 If Win / 603 If Lose / 604 End: MZ indents
+    // each branch body by one exactly like 111/411/412, but nothing here
+    // models it. It must survive as RawNodes carrying a `body`, not throw.
+    const commands: EventCommand[] = [
+      { code: 301, indent: 0, parameters: [0, 1, false, false] },
+      { code: 601, indent: 0, parameters: [] },
+      { code: 101, indent: 1, parameters: ['', 0, 0, 2] },
+      { code: 401, indent: 1, parameters: ['Victory!'] },
+      { code: 603, indent: 0, parameters: [] },
+      { code: 230, indent: 1, parameters: [60] },
+      { code: 604, indent: 0, parameters: [] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+
+    const nodes = decompile(commands);
+    expect(nodes).toEqual([
+      { kind: 'raw', code: 301, parameters: [0, 1, false, false] },
+      {
+        kind: 'raw',
+        code: 601,
+        parameters: [],
+        body: [{ kind: 'text', face: '', faceIndex: 0, background: 0, position: 2, speakerName: undefined, lines: ['Victory!'] }],
+      },
+      { kind: 'raw', code: 603, parameters: [], body: [{ kind: 'wait', frames: 60 }] },
+      { kind: 'raw', code: 604, parameters: [] },
+    ]);
+    expect(compile(nodes)).toEqual(commands);
+  });
+
+  it('does not hand out IR that aliases the input command list', () => {
+    const source: EventCommand[] = [
+      { code: 357, indent: 0, parameters: ['MyPlugin', 'cmd'] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    const [node] = decompile(source) as [{ kind: 'raw'; parameters: unknown[] }];
+    expect(node.parameters).not.toBe(source[0].parameters);
+    expect(compile([node as never])[0].parameters).not.toBe(source[0].parameters);
+  });
+
+  it('falls back to a RawNode instead of throwing on a Play SE with no audio operand', () => {
+    const commands: EventCommand[] = [
+      { code: 250, indent: 0, parameters: [] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    expect(decompile(commands)).toEqual([{ kind: 'raw', code: 250, parameters: [] }]);
+  });
+
   it('falls back to a raw condition for a variable-vs-variable conditional branch (unmodeled operand)', () => {
     const commands: EventCommand[] = [
       { code: 111, indent: 0, parameters: [1, 3, 1, 4, 0] }, // variable 3 vs variable 4, operandType 1

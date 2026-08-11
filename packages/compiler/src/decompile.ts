@@ -1,5 +1,5 @@
 import type { EventCommand } from '@rmmz-kit/core';
-import type { CompareOp, Condition, Node } from './ir.js';
+import type { CompareOp, Condition, Node, RawNode } from './ir.js';
 
 const COMPARE_OPS: CompareOp[] = ['eq', 'gte', 'lte', 'gt', 'lt', 'neq'];
 const VARIABLE_OPS: Array<'set' | 'add' | 'sub' | 'mul' | 'div' | 'mod'> = ['set', 'add', 'sub', 'mul', 'div', 'mod'];
@@ -39,7 +39,13 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
   while (pos < cmds.length) {
     const cmd = cmds[pos];
     if (cmd.indent < indent) break;
-    if (cmd.indent > indent) throw new Error(`Command ${pos} (code ${cmd.code}) is indented deeper than expected`);
+    if (cmd.indent > indent) {
+      // Only reachable when the *caller* mis-positioned us; every recursive
+      // call below enters a block whose first command is at `indent` or is a
+      // closer. Deeper-than-expected commands that follow an unmodeled
+      // structural command are absorbed as that command's `body` in `default`.
+      throw new Error(`Command ${pos} (code ${cmd.code}) is indented deeper than expected`);
+    }
     if (CLOSERS.has(cmd.code)) break;
 
     switch (cmd.code) {
@@ -93,8 +99,12 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
       }
 
       case 102: {
-        pos++;
         const params = cmd.parameters as [string[], number?, number?, number?, number?];
+        if (!Array.isArray(params[0])) {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
+        pos++;
         const choices = params[0];
         const branches: Node[][] = [];
         for (let i = 0; i < choices.length; i++) {
@@ -147,11 +157,11 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
 
       case 122: {
         const [from, to, opIdx, operandType, value] = cmd.parameters as [number, number, number, number, number];
-        if (operandType === 0 && VARIABLE_OPS[opIdx]) {
-          nodes.push({ kind: 'setVariable', from, to, op: VARIABLE_OPS[opIdx], value });
-        } else {
-          nodes.push({ kind: 'raw', code: cmd.code, parameters: cmd.parameters });
+        if (operandType !== 0 || !VARIABLE_OPS[opIdx]) {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
         }
+        nodes.push({ kind: 'setVariable', from, to, op: VARIABLE_OPS[opIdx], value });
         pos++;
         break;
       }
@@ -171,11 +181,11 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
 
       case 201: {
         const [designation, mapId, x, y, direction, fadeType] = cmd.parameters as number[];
-        if (designation === 0) {
-          nodes.push({ kind: 'transfer', mapId, x, y, direction, fadeType });
-        } else {
-          nodes.push({ kind: 'raw', code: cmd.code, parameters: cmd.parameters });
+        if (designation !== 0) {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
         }
+        nodes.push({ kind: 'transfer', mapId, x, y, direction, fadeType });
         pos++;
         break;
       }
@@ -187,18 +197,50 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
       }
 
       case 250: {
-        const audio = cmd.parameters[0] as { name: string; volume: number; pitch: number; pan: number };
+        const audio = cmd.parameters[0] as { name: string; volume: number; pitch: number; pan: number } | undefined;
+        // A plugin-written or truncated 250 must degrade to RawNode like every
+        // other unmodeled shape, not throw a TypeError out of decompile().
+        if (audio === null || typeof audio !== 'object') {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
         nodes.push({ kind: 'playSe', name: audio.name, volume: audio.volume, pitch: audio.pitch, pan: audio.pan });
         pos++;
         break;
       }
 
       default:
-        nodes.push({ kind: 'raw', code: cmd.code, parameters: cmd.parameters });
-        pos++;
+        pos = pushRaw(nodes, cmds, pos, indent);
     }
   }
   return { nodes, pos };
+}
+
+/**
+ * Emits a RawNode for the command at `pos` and, if the next command is
+ * indented one level deeper, absorbs that run as the node's `body`.
+ *
+ * The deeper-body case is how unmodeled *structural* commands survive:
+ * Battle Processing writes 301 / 601 "If Win" / 603 "If Lose" / 604 at one
+ * indent with their bodies at indent+1, exactly like 111/411/412, but nothing
+ * here models it. Before this, such a list threw — which contradicted the
+ * whole point of the RawNode fallback, since Battle Processing is ordinary
+ * content in a real project.
+ */
+function pushRaw(nodes: Node[], cmds: EventCommand[], pos: number, indent: number): number {
+  const cmd = cmds[pos];
+  // Copy the parameters array: it belongs to the caller's parsed project JSON,
+  // and the IR must not hand out a live alias into it.
+  const node: RawNode = { kind: 'raw', code: cmd.code, parameters: [...cmd.parameters] };
+  pos++;
+  const next = cmds[pos];
+  if (next && next.indent === indent + 1 && !CLOSERS.has(next.code)) {
+    const result = parseBlock(cmds, pos, indent + 1);
+    pos = result.pos;
+    node.body = result.nodes;
+  }
+  nodes.push(node);
+  return pos;
 }
 
 /** Choice/cancel branches end with an optional `{code:0}` filler (see ChoiceNode doc in ir.ts) — consume it if present. */
@@ -225,11 +267,11 @@ function readCondition(parameters: unknown[]): Condition {
     if (operandType === 0 && COMPARE_OPS[cmp]) {
       return { type: 'variable', variableId, cmp: COMPARE_OPS[cmp], value };
     }
-    return { type: 'raw', parameters };
+    return { type: 'raw', parameters: [...parameters] };
   }
   if (type === 12) {
     const [, code] = parameters as [number, string];
     return { type: 'script', code };
   }
-  return { type: 'raw', parameters };
+  return { type: 'raw', parameters: [...parameters] };
 }

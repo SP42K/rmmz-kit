@@ -34,7 +34,11 @@ function emitList(nodes: Node[], indent: number, out: EventCommand[]): void {
 function emitNode(node: Node, indent: number, out: EventCommand[]): void {
   switch (node.kind) {
     case 'raw':
-      out.push({ code: node.code, indent, parameters: node.parameters });
+      // Copy: the parameters array on a decompiled node aliases the array in
+      // the caller's parsed project JSON, and the emitted list must not stay
+      // wired to it (mutating one would silently mutate the other).
+      out.push({ code: node.code, indent, parameters: [...node.parameters] });
+      if (node.body) emitList(node.body, indent + 1, out);
       return;
 
     case 'text': {
@@ -64,6 +68,15 @@ function emitNode(node: Node, indent: number, out: EventCommand[]): void {
     }
 
     case 'choice': {
+      // A mismatch would emit `{code:402, parameters:[i, undefined]}`, and
+      // `undefined` inside an array survives JSON.stringify as `null` — i.e. a
+      // corrupt label written to disk that this compiler then refuses to
+      // decompile. Fail before that reaches the write path.
+      if (node.branches.length !== node.choices.length) {
+        throw new Error(
+          `Show Choices has ${node.choices.length} choice(s) but ${node.branches.length} branch bodies; they must match one-to-one`
+        );
+      }
       out.push({
         code: 102,
         indent,
@@ -137,6 +150,6 @@ function conditionParams(condition: Condition): unknown[] {
     case 'script':
       return [12, condition.code];
     case 'raw':
-      return condition.parameters;
+      return [...condition.parameters]; // copy, for the same aliasing reason as RawNode
   }
 }

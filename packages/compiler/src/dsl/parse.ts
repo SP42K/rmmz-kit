@@ -34,7 +34,14 @@ export function stepToNode(step: Step): Node {
     const { name, volume, pitch, pan } = step.playSe;
     return { kind: 'playSe', name, volume: volume ?? 90, pitch: pitch ?? 100, pan: pan ?? 0 };
   }
-  if ('raw' in step) return { kind: 'raw', code: step.raw.code, parameters: step.raw.parameters };
+  if ('raw' in step) {
+    return {
+      kind: 'raw',
+      code: step.raw.code,
+      parameters: step.raw.parameters,
+      body: step.raw.body?.map(stepToNode),
+    };
+  }
   throw new Error(`Unrecognized DSL step: ${JSON.stringify(step)}`);
 }
 
@@ -45,7 +52,15 @@ function sayToNode(say: string | SayPayload): Node {
   if (payload.face) {
     const [name, idx] = payload.face.split('/');
     face = name;
-    faceIndex = idx !== undefined ? Number(idx) : 0;
+    if (idx !== undefined) {
+      // Without this check a typo'd index becomes NaN, and NaN survives
+      // JSON.stringify as `null` — i.e. a silently corrupt faceIndex written
+      // into data/*.json rather than a rejected document.
+      faceIndex = Number(idx);
+      if (!Number.isInteger(faceIndex) || faceIndex < 0) {
+        throw new Error(`say.face expects "FileName/Index" with a non-negative integer index, got ${JSON.stringify(payload.face)}`);
+      }
+    }
   }
   return {
     kind: 'text',
@@ -75,10 +90,26 @@ function ifConditionOf(payload: IfPayload): Condition {
 
 function choiceToNode(payload: ChoicePayload): Node {
   const labels = Object.keys(payload.branches);
+  // `branches` is a mapping, and JS object key order is only insertion order
+  // for non-integer-like keys: `{ "10": …, "5": … }` enumerates as 5, 10, so a
+  // menu written with numeric labels would silently come out reordered. Menu
+  // order is meaningful (it is also the 402 branch index), so reject rather
+  // than reorder — a label like "1." or "１" is unaffected.
+  const numericLabel = labels.find((label) => /^(0|[1-9]\d*)$/.test(label));
+  if (numericLabel !== undefined) {
+    throw new Error(
+      `choice branch labels must not be plain non-negative integers (got ${JSON.stringify(numericLabel)}); ` +
+        'YAML mapping order is not preserved for them. Add any non-digit character to the label.'
+    );
+  }
   return {
     kind: 'choice',
     choices: labels,
-    cancelType: payload.cancelType ?? -2,
+    // -1 = cancel disallowed, -2 = cancel allowed and runs the "When Cancel"
+    // (403) body. Defaulting to -2 with no `cancel:` would let the player
+    // dismiss the menu and skip every branch, which is never what an author
+    // who omitted the key meant.
+    cancelType: payload.cancelType ?? (payload.cancel ? -2 : -1),
     defaultType: payload.defaultType ?? -1,
     positionType: payload.positionType ?? 2,
     background: payload.background ?? 0,
