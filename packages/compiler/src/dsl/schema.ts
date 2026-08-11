@@ -20,7 +20,7 @@ export type Step =
   | { transfer: { mapId: number; x: number; y: number; direction?: number; fade?: number } }
   | { wait: number }
   | { playSe: { name: string; volume?: number; pitch?: number; pan?: number } }
-  | { raw: { code: number; parameters: unknown[] } };
+  | { raw: { code: number; parameters: unknown[]; body?: Step[] } };
 
 export type VariableOp = 'set' | 'add' | 'sub' | 'mul' | 'div' | 'mod';
 
@@ -58,37 +58,50 @@ export interface ChoicePayload {
 
 const stepArray = (): z.ZodType<Step[]> => z.lazy(() => z.array(StepSchema));
 
-const SayPayloadSchema: z.ZodType<SayPayload> = z.object({
-  text: z.union([z.string(), z.array(z.string())]),
-  speaker: z.string().optional(),
-  face: z.string().optional(),
-  background: z.number().int().optional(),
-  position: z.number().int().optional(),
-});
+/**
+ * Every payload object is `.strict()`, not just the outer step wrappers. All
+ * of these fields are optional, so a stripping schema would accept `els:` /
+ * `speeker:` / `cancle:` and silently drop the value — for a surface whose
+ * whole point is being written by an LLM, a mistyped key that quietly deletes
+ * an else-branch is the worst possible failure mode. Reject instead.
+ */
+const SayPayloadSchema: z.ZodType<SayPayload> = z
+  .object({
+    text: z.union([z.string(), z.array(z.string())]),
+    speaker: z.string().optional(),
+    face: z.string().optional(),
+    background: z.number().int().optional(),
+    position: z.number().int().optional(),
+  })
+  .strict();
 
 const IfPayloadSchema: z.ZodType<IfPayload> = z.lazy(() =>
-  z.object({
-    switch: z.number().int().optional(),
-    is: z.boolean().optional(),
-    variable: z.number().int().optional(),
-    cmp: z.enum(['eq', 'gte', 'lte', 'gt', 'lt', 'neq']).optional(),
-    value: z.number().optional(),
-    script: z.string().optional(),
-    raw: z.array(z.unknown()).optional(),
-    then: stepArray(),
-    else: stepArray().optional(),
-  })
+  z
+    .object({
+      switch: z.number().int().optional(),
+      is: z.boolean().optional(),
+      variable: z.number().int().optional(),
+      cmp: z.enum(['eq', 'gte', 'lte', 'gt', 'lt', 'neq']).optional(),
+      value: z.number().optional(),
+      script: z.string().optional(),
+      raw: z.array(z.unknown()).optional(),
+      then: stepArray(),
+      else: stepArray().optional(),
+    })
+    .strict()
 );
 
 const ChoicePayloadSchema: z.ZodType<ChoicePayload> = z.lazy(() =>
-  z.object({
-    cancelType: z.number().int().optional(),
-    defaultType: z.number().int().optional(),
-    positionType: z.number().int().optional(),
-    background: z.number().int().optional(),
-    branches: z.record(z.string(), stepArray()),
-    cancel: stepArray().optional(),
-  })
+  z
+    .object({
+      cancelType: z.number().int().optional(),
+      defaultType: z.number().int().optional(),
+      positionType: z.number().int().optional(),
+      background: z.number().int().optional(),
+      branches: z.record(z.string(), stepArray()),
+      cancel: stepArray().optional(),
+    })
+    .strict()
 );
 
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
@@ -97,45 +110,59 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
     z.object({ comment: z.union([z.string(), z.array(z.string())]) }).strict(),
     z.object({ if: IfPayloadSchema }).strict(),
     z.object({ choice: ChoicePayloadSchema }).strict(),
-    z.object({ loop: z.object({ body: stepArray() }) }).strict(),
+    z.object({ loop: z.object({ body: stepArray() }).strict() }).strict(),
     z
-      .object({ setSwitch: z.object({ from: z.number().int(), to: z.number().int().optional(), value: z.boolean() }) })
+      .object({
+        setSwitch: z.object({ from: z.number().int(), to: z.number().int().optional(), value: z.boolean() }).strict(),
+      })
       .strict(),
     z
       .object({
-        setVariable: z.object({
-          from: z.number().int(),
-          to: z.number().int().optional(),
-          op: z.enum(['set', 'add', 'sub', 'mul', 'div', 'mod']).optional(),
-          value: z.number(),
-        }),
+        setVariable: z
+          .object({
+            from: z.number().int(),
+            to: z.number().int().optional(),
+            op: z.enum(['set', 'add', 'sub', 'mul', 'div', 'mod']).optional(),
+            value: z.number(),
+          })
+          .strict(),
       })
       .strict(),
-    z.object({ setSelfSwitch: z.object({ ch: z.enum(['A', 'B', 'C', 'D']), value: z.boolean() }) }).strict(),
+    z.object({ setSelfSwitch: z.object({ ch: z.enum(['A', 'B', 'C', 'D']), value: z.boolean() }).strict() }).strict(),
     z.object({ callCommonEvent: z.number().int() }).strict(),
     z
       .object({
-        transfer: z.object({
-          mapId: z.number().int(),
-          x: z.number().int(),
-          y: z.number().int(),
-          direction: z.number().int().optional(),
-          fade: z.number().int().optional(),
-        }),
+        transfer: z
+          .object({
+            mapId: z.number().int(),
+            x: z.number().int(),
+            y: z.number().int(),
+            direction: z.number().int().optional(),
+            fade: z.number().int().optional(),
+          })
+          .strict(),
       })
       .strict(),
     z.object({ wait: z.number().int().nonnegative() }).strict(),
     z
       .object({
-        playSe: z.object({
-          name: z.string(),
-          volume: z.number().optional(),
-          pitch: z.number().optional(),
-          pan: z.number().optional(),
-        }),
+        playSe: z
+          .object({
+            name: z.string(),
+            volume: z.number().optional(),
+            pitch: z.number().optional(),
+            pan: z.number().optional(),
+          })
+          .strict(),
       })
       .strict(),
-    z.object({ raw: z.object({ code: z.number().int(), parameters: z.array(z.unknown()) }) }).strict(),
+    z
+      .object({
+        raw: z
+          .object({ code: z.number().int(), parameters: z.array(z.unknown()), body: stepArray().optional() })
+          .strict(),
+      })
+      .strict(),
   ])
 );
 

@@ -140,6 +140,25 @@ describe('checkSemantics', () => {
     expect(findings.filter((f) => f.rule === 'semantics/cross-namespace-switch-write')).toEqual([]);
   });
 
+  it('sees commands nested under an unmodeled structural command (Battle Processing win branch)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      // 301/601 decompile to a RawNode with a `body` — walkNodes must descend
+      // into it or every rule goes blind inside an If Win/If Lose branch.
+      const list = [
+        { code: 301, indent: 0, parameters: [0, 1, false, false] },
+        { code: 601, indent: 1, parameters: [] },
+        { code: 125, indent: 2, parameters: [1, 0, 500] }, // unguarded gold loss
+        { code: 604, indent: 1, parameters: [] },
+      ];
+      data.events.push(mapEvent(2, 'Battle', [page(list)]));
+    });
+    const findings = checkSemantics(session);
+    expect(findings.some((f) => f.rule === 'semantics/possible-negative-gold')).toBe(true);
+  });
+
   it('flags Change Gold decrease with no enclosing Gold>= guard, and not one that has a guard', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

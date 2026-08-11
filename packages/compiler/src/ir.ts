@@ -32,6 +32,18 @@ export interface RawNode {
   kind: 'raw';
   code: number;
   parameters: unknown[];
+  /**
+   * Commands nested one indent level under this one. Present only for
+   * *unmodeled* structural commands — Battle Processing's 301/601/602/603/604
+   * being the common real-world case: MZ indents each If Win/If Escape/If Lose
+   * body by one, exactly like 111/411/412, but this compiler has no typed node
+   * for it. Without this field decompile would have to throw on such a list,
+   * which would break the "decompiling an arbitrary project never fails and
+   * never loses data" guarantee. Nesting is the only thing modeled here — the
+   * grouping of 601/603 under their 301 is not, and doesn't need to be, since
+   * emit re-derives indent from depth the same way MZ wrote it.
+   */
+  body?: Node[];
 }
 
 /** Show Text (101) + its Show Text continuation lines (401). */
@@ -89,11 +101,17 @@ export interface ChoiceNode {
   kind: 'choice';
   choices: string[];
   /**
-   * -2 = disallow cancel, -1 = cancel selects no branch, >=0 = same as
-   * choosing that index. A `{code:403}` "When Canceled" branch is rare and,
-   * per the interpreter, independent of this value (our own fixture has
-   * cancelType -1 with no 403 present) — its presence is tracked separately
-   * via `cancelBranch`, not derived from cancelType.
+   * -1 = cancel disallowed entirely (`Window_ChoiceList.isCancelEnabled` is
+   * `choiceCancelType() !== -1`); -2 = cancel allowed and selects no branch,
+   * which is what routes to a `{code:403}` "When Canceled" body; >=0 = cancel
+   * behaves as choosing that index. The editor writes `choices.length` for
+   * "Branch" and `Game_Interpreter.setupChoices` normalizes anything >= length
+   * to -2, so -2 and `choices.length` are equivalent on disk.
+   *
+   * A 403 branch's *presence* is tracked separately via `cancelBranch` rather
+   * than derived from this value: a project can legitimately carry a 403 that
+   * the current cancelType makes unreachable, and decompiling must not silently
+   * drop it.
    */
   cancelType: number;
   /** -1 = no default selection. */

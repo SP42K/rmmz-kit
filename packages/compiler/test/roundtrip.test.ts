@@ -85,7 +85,15 @@ function randomNode(rng: () => number, depth: number): Node {
           cancelBranch: rng() < 0.3 ? randomList(rng, depth - 1) : undefined,
         };
       },
-      () => ({ kind: 'loop', body: randomList(rng, depth - 1) })
+      () => ({ kind: 'loop', body: randomList(rng, depth - 1) }),
+      // An unmodeled structural command with an indented body — Battle
+      // Processing's 601/603 being the real-world shape. Only ever attached
+      // non-empty: `body: []` and no body compile to the same command list.
+      () => {
+        const body = randomList(rng, depth - 1);
+        const raw: Node = { kind: 'raw', code: pick(rng, [601, 602, 603]), parameters: [] };
+        return body.length > 0 ? { ...raw, body } : raw;
+      }
     );
   }
 

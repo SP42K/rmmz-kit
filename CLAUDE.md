@@ -26,13 +26,15 @@ everything from M5 onward not started.
 npm test                                       # all tests (vitest)
 npx vitest run packages/core/test/session.test.ts   # one file
 npx vitest run -t "rollback"                   # one test by name
-npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck (what CI runs, per package)
+npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
 npx tsc -p packages/compiler/tsconfig.json --noEmit
 npx tsc -p packages/validate/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
 
-No linter. CI (`.github/workflows/test.yml`) = typecheck (each package) + vitest on Node 20.
+No linter. CI (`.github/workflows/test.yml`) = one typecheck per package + vitest on Node 20.
+vitest strips types without checking them, so a new package must add its own `tsc` step there
+or its type errors reach `master` unnoticed.
 
 Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` (and each other
 package's own `test/testProject.ts`, deliberately duplicated rather than cross-imported) copies
@@ -83,7 +85,11 @@ indent+code back into the same tree, falling back to `RawNode` for any code
 or operand shape (e.g. a Control Variables command with a variable operand
 instead of a constant) it doesn't model. This `RawNode` fallback is what
 makes decompiling an arbitrary existing project safe — nothing outside Tier 1
-is ever silently dropped, only left unparsed.
+is ever silently dropped, only left unparsed. `RawNode.body` extends that to
+unmodeled *structural* commands (Battle Processing's 301/601/602/603/604
+indent their branch bodies exactly like 111/411/412): the deeper-indented run
+following a raw command is absorbed as its body, so decompile never has to
+throw on a shape it doesn't understand.
 
 `dsl/` is the YAML authoring surface an LLM/human writes (plan §4.2), a Zod
 schema (`schema.ts`) over a much smaller "Step" shape, `parse.ts` compiling
@@ -121,8 +127,9 @@ callers filter by `severity`/`rule` themselves:
   Switches/variables aren't a bounded table in MZ (any numeric id "works"), so a referenced-but-
   unnamed switch/variable is a warning, not the error a truly dangling database id gets.
 - `rules/semantics.ts` — dead event pages (MZ matches pages last-to-first; a page is dead if a
-  *later* page's condition set is a subset of its own), a self switch turned on but never turned
-  off anywhere in the same event, unused named switches/variables, and two heuristics explicitly
+  *later* page's condition set is a subset of its own), a self switch written but read by no page
+  of the same event (**not** "never turned back off" — the one-way latch is the treasure-chest
+  idiom, so that framing warned once per chest), unused named switches/variables, and two heuristics explicitly
   documented as heuristics in their doc comments (cross-namespace switch writes, gold/item
   decreases with no enclosing possession check).
 
