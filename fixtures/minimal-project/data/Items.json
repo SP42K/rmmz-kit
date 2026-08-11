@@ -1,0 +1,75 @@
+[
+  null,
+  {
+    "id": 1,
+    "name": "TestPotion",
+    "iconIndex": 0,
+    "description": "",
+    "price": 100,
+    "consumable": true,
+    "scope": 7,
+    "occasion": 0,
+    "speed": 0,
+    "successRate": 100,
+    "repeats": 1,
+    "tpGain": 0,
+    "hitType": 0,
+    "animationId": 0,
+    "damage": {
+      "type": 0,
+      "elementId": 0,
+      "formula": "0",
+      "variance": 20
+    },
+    "effects": [],
+    "note": ""
+  },
+  {
+    "id": 2,
+    "name": "TestPotion",
+    "iconIndex": 0,
+    "description": "",
+    "price": 100,
+    "consumable": true,
+    "scope": 7,
+    "occasion": 0,
+    "speed": 0,
+    "successRate": 100,
+    "repeats": 1,
+    "tpGain": 0,
+    "hitType": 0,
+    "animationId": 0,
+    "damage": {
+      "type": 0,
+      "elementId": 0,
+      "formula": "0",
+      "variance": 20
+    },
+    "effects": [],
+    "note": ""
+  },
+  {
+    "id": 3,
+    "name": "Test Item",
+    "iconIndex": 0,
+    "description": "",
+    "price": 0,
+    "consumable": true,
+    "scope": 7,
+    "occasion": 0,
+    "speed": 0,
+    "successRate": 100,
+    "repeats": 1,
+    "tpGain": 0,
+    "hitType": 0,
+    "animationId": 0,
+    "damage": {
+      "type": 0,
+      "elementId": 0,
+      "formula": "0",
+      "variance": 20
+    },
+    "effects": [],
+    "note": ""
+  }
+]
