@@ -74,7 +74,7 @@ describe('validateProject (M4 acceptance)', () => {
           page([]),
         ])
       );
-      // semantics/self-switch-never-reset
+      // semantics/self-switch-never-read
       data.events.push(mapEvent(12, 'E-self-switch', [page([{ code: 123, indent: 0, parameters: ['A', 0] }])]));
       // semantics/cross-namespace-switch-write
       data.events.push(
@@ -112,7 +112,7 @@ describe('validateProject (M4 acceptance)', () => {
       'references/asset-missing',
       'references/asset-case-mismatch',
       'semantics/dead-event-page',
-      'semantics/self-switch-never-reset',
+      'semantics/self-switch-never-read',
       'semantics/cross-namespace-switch-write',
       'semantics/possible-negative-gold',
       'semantics/possible-negative-item',

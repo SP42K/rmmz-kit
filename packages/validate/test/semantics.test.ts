@@ -58,29 +58,48 @@ describe('checkSemantics', () => {
     expect(findings.filter((f) => f.rule === 'semantics/dead-event-page')).toEqual([]);
   });
 
-  it('flags a self switch turned on but never reset anywhere in the event', async () => {
+  it('flags a self switch that is set but read by no page of the event', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
     const session = await openProject(dir);
     session.updateFile<MapData>('Map001.json', (data) => {
-      const list = [{ code: 123, indent: 0, parameters: ['A', 0] }]; // 0 = ON
-      data.events.push(mapEvent(2, 'Stuck', [page(list)]));
+      // Sets B, but the only gate checks A — the copy-paste slip this rule exists for.
+      const opener = page([{ code: 123, indent: 0, parameters: ['B', 0] }]); // 0 = ON
+      const opened = page([], { conditions: blankConditions({ selfSwitchValid: true, selfSwitchCh: 'A' }) });
+      data.events.push(mapEvent(2, 'Wrong channel', [opener, opened]));
     });
     const findings = checkSemantics(session);
-    expect(findings.some((f) => f.rule === 'semantics/self-switch-never-reset')).toBe(true);
+    expect(findings.some((f) => f.rule === 'semantics/self-switch-never-read')).toBe(true);
   });
 
-  it('does not flag a self switch that is also turned off somewhere in the event', async () => {
+  it('does not flag the treasure-chest idiom (set A, later page gated on A, never reset)', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
     const session = await openProject(dir);
     session.updateFile<MapData>('Map001.json', (data) => {
-      const on = page([{ code: 123, indent: 0, parameters: ['A', 0] }]);
-      const off = page([{ code: 123, indent: 0, parameters: ['A', 1] }]);
-      data.events.push(mapEvent(2, 'Fine', [on, off]));
+      const closed = page([{ code: 123, indent: 0, parameters: ['A', 0] }]);
+      const opened = page([], { conditions: blankConditions({ selfSwitchValid: true, selfSwitchCh: 'A' }) });
+      data.events.push(mapEvent(2, 'Chest', [closed, opened]));
     });
     const findings = checkSemantics(session);
-    expect(findings.filter((f) => f.rule === 'semantics/self-switch-never-reset')).toEqual([]);
+    expect(findings.filter((f) => f.rule === 'semantics/self-switch-never-read')).toEqual([]);
+  });
+
+  it('counts a self-switch Conditional Branch as a read', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      const list = [
+        { code: 111, indent: 0, parameters: [2, 'A', 0] }, // if self switch A is ON
+        { code: 123, indent: 1, parameters: ['A', 1] },
+        { code: 412, indent: 0, parameters: [] },
+        { code: 123, indent: 0, parameters: ['A', 0] },
+      ];
+      data.events.push(mapEvent(2, 'Toggle', [page(list)]));
+    });
+    const findings = checkSemantics(session);
+    expect(findings.filter((f) => f.rule === 'semantics/self-switch-never-read')).toEqual([]);
   });
 
   it('flags a page writing a switch from a different named namespace than the one gating it', async () => {

@@ -7,7 +7,7 @@ import { forEachMapEvent, forEachCommandList, tryDecompile, walkNodes } from '..
 export function checkSemantics(session: ProjectSession): Finding[] {
   const findings: Finding[] = [];
   checkDeadPages(session, findings);
-  checkSelfSwitchNeverReset(session, findings);
+  checkSelfSwitchNeverRead(session, findings);
   checkNamespaceCollisions(session, findings);
   checkNegativeResources(session, findings);
   checkUnusedFlags(session, findings);
@@ -65,32 +65,53 @@ function checkDeadPages(session: ProjectSession, findings: Finding[]): void {
   });
 }
 
-/** Self switches are per-(map, event, A-D), shared by every page of that one event. If some page turns one on and no page in the same event ever turns it back off, whatever page that switch gates can never be shown again once left. */
-function checkSelfSwitchNeverReset(session: ProjectSession, findings: Finding[]): void {
-  const state = new Map<string, { on: boolean; off: boolean; file: string; path: string; eventName: string }>();
+/**
+ * Self switches are per-(map, event, A-D) and only the owning event can read
+ * one: through a page condition, or through a self-switch Conditional Branch.
+ * A write no page of that event ever reads is dead — the usual cause is a
+ * copy-pasted page setting B while the gate still checks A.
+ *
+ * Deliberately NOT "turned ON but never turned back OFF": that one-way latch
+ * is the standard treasure-chest / one-shot-cutscene idiom, so the earlier
+ * never-reset framing fired once per chest on any real project and buried the
+ * signal. Reads this can't see: `$gameSelfSwitches` inside a Script command,
+ * and a Conditional Branch inside a common event the event calls (a common
+ * event runs on its caller's interpreter, so it reads the caller's channels).
+ */
+function checkSelfSwitchNeverRead(session: ProjectSession, findings: Finding[]): void {
+  const writes = new Map<string, { ch: string; file: string; path: string; eventName: string }>();
+  const reads = new Set<string>();
   forEachCommandList(session, (ctx) => {
     if (ctx.kind !== 'mapEventPage') return;
+    const key = (ch: string) => `${ctx.file}:${ctx.eventId}:${ch}`;
+    // Before the decompile bail-out: a page's gate is a read even when its own
+    // command list is too malformed to parse.
+    if (ctx.conditions?.selfSwitchValid) reads.add(key(ctx.conditions.selfSwitchCh));
     const nodes = tryDecompile(ctx.list);
     if (!nodes) return;
     walkNodes(nodes, (node) => {
-      if (node.kind !== 'setSelfSwitch') return;
-      const key = `${ctx.file}:${ctx.eventId}:${node.ch}`;
-      const entry = state.get(key) ?? { on: false, off: false, file: ctx.file, path: ctx.path, eventName: ctx.eventName! };
-      if (node.value) entry.on = true;
-      else entry.off = true;
-      state.set(key, entry);
+      if (node.kind === 'setSelfSwitch') {
+        const k = key(node.ch);
+        if (!writes.has(k)) writes.set(k, { ch: node.ch, file: ctx.file, path: ctx.path, eventName: ctx.eventName! });
+        return;
+      }
+      // Conditional Branch type 2 = self switch, parameters [2, ch, value].
+      // §4.3 models only switch/variable/script conditions, so it lands in `raw`.
+      if (node.kind === 'if' && node.condition.type === 'raw') {
+        const [type, ch] = node.condition.parameters as [number, string, ...unknown[]];
+        if (type === 2) reads.add(key(ch));
+      }
     });
   });
-  for (const entry of state.values()) {
-    if (entry.on && !entry.off) {
-      findings.push({
-        rule: 'semantics/self-switch-never-reset',
-        severity: 'warning',
-        message: `A self switch is turned ON somewhere in "${entry.eventName}" but never turned back OFF anywhere in the same event`,
-        file: entry.file,
-        path: entry.path,
-      });
-    }
+  for (const [k, w] of writes) {
+    if (reads.has(k)) continue;
+    findings.push({
+      rule: 'semantics/self-switch-never-read',
+      severity: 'warning',
+      message: `Self switch ${w.ch} is set in "${w.eventName}" but nothing in that event reads it — no page is gated on it and no Conditional Branch checks it`,
+      file: w.file,
+      path: w.path,
+    });
   }
 }
 
