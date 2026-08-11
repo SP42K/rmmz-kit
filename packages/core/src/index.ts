@@ -5,3 +5,8 @@ export { stringifyCompact, parseJson } from './io/format.js';
 export { assertProjectRoot, findProjectFile, listDataFiles } from './io/projectRoot.js';
 export { EditorLockSnapshot } from './editorLock.js';
 export { GitRepo } from './git.js';
+export { IdAllocator } from './idAllocator.js';
+export type { NamespaceAllocation } from './idAllocator.js';
+export { RefIndex } from './refIndex.js';
+export type { RefKind, RefLocation } from './refIndex.js';
+export * from './types/mz.js';

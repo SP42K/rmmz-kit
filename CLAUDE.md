@@ -14,7 +14,8 @@ and a risk register (R1, R3, ...) that source comments reference by number. **Re
 starting a new milestone** — it records why decisions were made and which reference-repo code was
 deliberately rejected.
 
-Status: M1 / L0 done (project I/O + transaction). L1 onward not started.
+Status: M1 / L0 done (project I/O + transaction). M2 / L1 done (data model types,
+ID allocator, reference index). L2 onward not started.
 
 ## Commands
 
