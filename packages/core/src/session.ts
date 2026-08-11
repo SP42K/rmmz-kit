@@ -75,6 +75,11 @@ export class ProjectSession {
     return [...this.files.keys()];
   }
 
+  /** Files with in-memory mutations since open() (or the last commit/rollback) — what commit() would write. */
+  dirtyFiles(): string[] {
+    return [...this.dirty];
+  }
+
   readFile<T = unknown>(name: string): T {
     if (!this.files.has(name)) {
       throw new Error(`Unknown data file: ${name}`);
