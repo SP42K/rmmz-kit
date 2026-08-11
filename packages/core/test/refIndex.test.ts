@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { openProject } from '../src/session.js';
 import { RefIndex } from '../src/refIndex.js';
 import { MapData, MapEvent } from '../src/types/mz.js';
@@ -19,6 +21,23 @@ function blankConditions() {
     variableId: 0,
     variableValid: false,
     variableValue: 0,
+  };
+}
+
+function blankTroopConditions() {
+  return {
+    actorHp: false,
+    actorId: 0,
+    actorValid: false,
+    enemyHp: false,
+    enemyIndex: 0,
+    enemyValid: false,
+    switchId: 0,
+    switchValid: false,
+    turnA: 0,
+    turnB: 0,
+    turnEnding: false,
+    turnValid: false,
   };
 }
 
@@ -114,5 +133,56 @@ describe('RefIndex', () => {
       data.events = data.events.filter((e) => e?.id !== 2);
     });
     expect(RefIndex.build(session).referencesTo('item', 3)).toEqual([]);
+  });
+
+  it('indexes troop battle-event pages: page condition switch and command list', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const troops = [
+      null,
+      {
+        id: 1,
+        name: 'Slime*2',
+        members: [],
+        pages: [
+          {
+            conditions: { ...blankTroopConditions(), switchValid: true, switchId: 11 },
+            span: 0,
+            list: [
+              { code: 121, indent: 0, parameters: [12, 12, 0] },
+              { code: 0, indent: 0, parameters: [] },
+            ],
+          },
+        ],
+      },
+    ];
+    await writeFile(path.join(dir, 'data', 'Troops.json'), JSON.stringify(troops));
+
+    const index = RefIndex.build(await openProject(dir));
+    expect(index.referencesTo('switch', 11)).toHaveLength(1);
+    expect(index.referencesTo('switch', 12)).toHaveLength(1);
+    expect(index.referencesTo('switch', 12)[0].file).toBe('Troops.json');
+  });
+
+  it('descends into move routes (Switch ON/OFF steps) without double-counting the 505 echo', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      const event = npcReferencingItem3();
+      const step = { code: 27, parameters: [21] }; // ROUTE_SWITCH_ON
+      event.pages[0].list = [
+        { code: 205, indent: 0, parameters: [-1, { list: [step, { code: 0, parameters: [] }], repeat: false, skippable: false, wait: false }] },
+        { code: 505, indent: 0, parameters: [step] }, // MZ re-emits every step inline right after the 205
+        { code: 0, indent: 0, parameters: [] },
+      ];
+      event.pages[0].moveRoute = { list: [{ code: 28, parameters: [22] }, { code: 0, parameters: [] }], repeat: true, skippable: false, wait: false };
+      data.events.push(event);
+    });
+
+    const index = RefIndex.build(session);
+    expect(index.referencesTo('switch', 21)).toHaveLength(1);
+    expect(index.referencesTo('switch', 22)).toHaveLength(1);
   });
 });

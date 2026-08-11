@@ -1,5 +1,5 @@
 import { ProjectSession } from './session.js';
-import { CommonEvent, EventCommand, EventPage, MapData } from './types/mz.js';
+import { CommonEvent, EventCommand, EventPage, MapData, MoveRoute, Troop } from './types/mz.js';
 
 export type RefKind = 'switch' | 'variable' | 'item' | 'actor' | 'map' | 'commonEvent';
 
@@ -16,6 +16,12 @@ export interface RefLocation {
  * event command codes. Full event-command parameter semantics is the L2
  * compiler's job (§4.3 of the plan, ~35 command codes); this only knows the
  * handful needed for reference tracking and grows as L2's dictionary does.
+ *
+ * Every place a reference can hide has to be scanned, though, or the index
+ * answers "nothing refers to this" about something that breaks when deleted —
+ * which is the one answer it exists to give. So: map events, common events
+ * (including the autorun/parallel trigger switch), troop battle-event pages,
+ * and the nested move-route lists inside both.
  */
 export class RefIndex {
   private readonly byRef = new Map<string, RefLocation[]>();
@@ -25,6 +31,8 @@ export class RefIndex {
     for (const file of session.listFiles()) {
       if (/^Map\d+\.json$/.test(file)) {
         index.scanMap(session.readFile<MapData>(file), file);
+      } else if (file === 'Troops.json') {
+        index.scanTroops(session.readFile<Array<Troop | null>>(file), file);
       } else if (file === 'CommonEvents.json') {
         for (const event of session.readFile<Array<CommonEvent | null>>(file)) {
           if (!event) continue;
@@ -45,6 +53,14 @@ export class RefIndex {
     return this.byRef.get(key(kind, id)) ?? [];
   }
 
+  /** Every (kind, id) actually referenced somewhere, with its locations. Used by L4 to check each id against its owning table without re-scanning commands itself. */
+  entries(): Array<{ kind: RefKind; id: number; locations: RefLocation[] }> {
+    return [...this.byRef.entries()].map(([k, locations]) => {
+      const [kind, idStr] = k.split(':') as [RefKind, string];
+      return { kind, id: Number(idStr), locations };
+    });
+  }
+
   private add(loc: RefLocation): void {
     const k = key(loc.kind, loc.id);
     const list = this.byRef.get(k);
@@ -56,10 +72,47 @@ export class RefIndex {
     for (const event of map.events) {
       if (!event) continue;
       event.pages.forEach((page, pageIndex) => {
-        this.scanPageConditions(page, file, `event ${event.id} > page ${pageIndex + 1}`);
-        this.scanCommands(page.list, file, `event ${event.id} > page ${pageIndex + 1}`);
+        const path = `event ${event.id} > page ${pageIndex + 1}`;
+        this.scanPageConditions(page, file, path);
+        // Autonomous movement (moveType 3 = Custom) is a move route too, and
+        // can flip switches without the command list ever mentioning them.
+        this.scanMoveRoute(page.moveRoute, file, `${path} > autonomous move route`);
+        this.scanCommands(page.list, file, path);
       });
     }
+  }
+
+  /**
+   * Troop battle-event pages are map-event pages living in another file: a
+   * `switchId` page condition plus an ordinary event command list. Skipping
+   * them made a switch that is only ever set from battle read as unreferenced.
+   */
+  private scanTroops(troops: Array<Troop | null>, file: string): void {
+    for (const troop of troops) {
+      if (!troop) continue;
+      troop.pages.forEach((page, pageIndex) => {
+        const path = `troop ${troop.id} > page ${pageIndex + 1}`;
+        if (page.conditions.switchValid) {
+          this.add({ kind: 'switch', id: page.conditions.switchId, file, path: `${path} > condition.switch` });
+        }
+        this.scanCommands(page.list, file, path);
+      });
+    }
+  }
+
+  /**
+   * A move route's `list` uses movement command codes (Game_Character.ROUTE_*),
+   * a different numbering space from event commands — hence a separate scanner
+   * rather than more cases in scanCommands. Only 27/28 (Switch ON/OFF) carry a
+   * reference; script steps (45) are left unparsed, same as event-command
+   * scripts everywhere else in this file.
+   */
+  private scanMoveRoute(route: MoveRoute | undefined, file: string, path: string): void {
+    if (!route?.list) return;
+    route.list.forEach((cmd, i) => {
+      if (cmd.code !== 27 && cmd.code !== 28) return;
+      this.add({ kind: 'switch', id: cmd.parameters[0], file, path: `${path} > step ${i} (code ${cmd.code})` });
+    });
   }
 
   private scanPageConditions(page: EventPage, file: string, path: string): void {
@@ -108,6 +161,14 @@ export class RefIndex {
             if (cmd.parameters[2] === 1) this.add({ kind: 'variable', id: cmd.parameters[3], file, path: at });
           }
           if (type === 8) this.add({ kind: 'item', id: cmd.parameters[1], file, path: at });
+          break;
+        }
+        case 205: {
+          // Set Movement Route: [characterId, route]. The route's own steps can
+          // turn switches on/off, so they have to be scanned. Code 505 re-emits
+          // each of those steps inline in *this* list; it deliberately has no
+          // case here, so nothing gets counted twice.
+          this.scanMoveRoute(cmd.parameters[1] as MoveRoute | undefined, file, at);
           break;
         }
         case 201: {

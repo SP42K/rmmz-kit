@@ -17,4 +17,5 @@ jobs:
       # vitest transpiles without typechecking, so every package needs its own
       # tsc run here or its type errors reach main unnoticed.
       - run: npx tsc -p packages/compiler/tsconfig.json --noEmit
+      - run: npx tsc -p packages/validate/tsconfig.json --noEmit
       - run: npx vitest run

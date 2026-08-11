@@ -16,8 +16,9 @@ deliberately rejected.
 
 Status: M1 / L0 done (project I/O + transaction). M2 / L1 done (data model types,
 ID allocator, reference index). M3 / L2 Tier 1 done (`packages/compiler`: YAML DSL,
-IR, emit, decompile — see below). L2 Tier 2/3 and everything from M4 onward not
-started.
+IR, emit, decompile — see below). M4 / L4 done (`packages/validate`: structure,
+reference-integrity, and semantic/graph rules — see below). L2 Tier 2/3 and
+everything from M5 onward not started.
 
 ## Commands
 
@@ -27,6 +28,7 @@ npx vitest run packages/core/test/session.test.ts   # one file
 npx vitest run -t "rollback"                   # one test by name
 npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
 npx tsc -p packages/compiler/tsconfig.json --noEmit
+npx tsc -p packages/validate/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
 
@@ -34,7 +36,8 @@ No linter. CI (`.github/workflows/test.yml`) = one typecheck per package + vites
 vitest strips types without checking them, so a new package must add its own `tsc` step there
 or its type errors reach `master` unnoticed.
 
-Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` copies
+Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` (and each other
+package's own `test/testProject.ts`, deliberately duplicated rather than cross-imported) copies
 `fixtures/minimal-project` to a temp dir and `git init`s it for every test.
 
 ## Architecture
@@ -107,6 +110,42 @@ see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
   shorter/older array. Round-tripping through this compiler is therefore
   idempotent (`decompile(compile(x))` is stable) but not always byte-identical
   to arbitrary pre-existing data — see `decompile.test.ts`'s fixture test.
+
+### L4 validator (`packages/validate`)
+
+`validateProject(session)` (`src/index.ts`) runs three independent rule groups (plan §4.4) and
+returns a flat `Finding[]` (`rule`, `severity`, `message`, `file`, `path?`) — no report class,
+callers filter by `severity`/`rule` themselves:
+- `rules/structure.ts` — reuses `@rmmz-kit/compiler`'s `decompile()` as the structural check
+  (it already throws on every 111/412, 112/413, 102/402/403/404 pairing or indent mistake) instead
+  of re-deriving bracket-matching; adds only what `decompile()` deliberately doesn't catch (an
+  orphan 401/408 continuation, a 113 Break Loop outside any 112 Loop).
+- `rules/references.ts` — dangling item/actor/commonEvent/map ids (via `RefIndex.entries()`,
+  a small addition to core alongside making `ProjectSession.rootPath` public — both added because
+  this package needed them), transfer-destination bounds, and face/character/SE asset existence
+  (case-sensitive, with a separate warning for a case-only mismatch) under `img/`, `audio/se/`.
+  Switches/variables aren't a bounded table in MZ (any numeric id "works"), so a referenced-but-
+  unnamed switch/variable is a warning, not the error a truly dangling database id gets.
+- `rules/semantics.ts` — dead event pages (MZ matches pages last-to-first; a page is dead if a
+  *later* page's condition set is a subset of its own), a self switch written but read by no page
+  of the same event (**not** "never turned back off" — the one-way latch is the treasure-chest
+  idiom, so that framing warned once per chest), unused named switches/variables, and two heuristics explicitly
+  documented as heuristics in their doc comments (cross-namespace switch writes, gold/item
+  decreases with no enclosing possession check).
+
+`walk.ts` has the shared traversal: `forEachMapEvent`/`forEachCommandList` mirror `RefIndex`'s own
+"scan every Map*.json + CommonEvents.json" loop; `walkNodes` recurses a decompiled `Node[]` tree
+while threading Conditional-Branch guards (gold/item) through `if.then` — several rules key off
+this instead of re-scanning raw command arrays.
+
+Deliberately out of scope, not silently approximated: dangling weapon/armor/skill/state/troop/class
+ids (would need Tier 2/3 command support this repo doesn't have yet) and a generic softlock/quest-
+graph reachability engine (the plan's own namespaced-switch sugar isn't built, so "quest graph"
+has no formal node/edge model to check against — see each rule file's doc comment for exactly
+what's covered instead).
+
+This is independent of `ProjectSession.validate()` (drift + JSON-serializability, gates `commit()`)
+— `validateProject()` is a separate pass an agent or human runs before deciding to commit at all.
 
 ### Legacy JS carried over
 
