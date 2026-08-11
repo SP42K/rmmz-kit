@@ -31,7 +31,17 @@ describe('MCP server wiring', () => {
 
     const { tools } = await client.listTools();
     expect(new Set(tools.map((t) => t.name))).toEqual(
-      new Set(['apply_script', 'upsert_map_event', 'upsert_database', 'allocate_namespace', 'validate', 'diff', 'commit', 'rollback'])
+      new Set([
+        'apply_script',
+        'upsert_map_event',
+        'upsert_database',
+        'allocate_namespace',
+        'validate',
+        'simulate_battle',
+        'diff',
+        'commit',
+        'rollback',
+      ])
     );
 
     const { resources } = await client.listResources();

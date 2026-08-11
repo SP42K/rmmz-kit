@@ -134,6 +134,20 @@ describe('tools', () => {
     expect(alloc.switches[1]).toBe(alloc.switches[0] + 1);
   });
 
+  it('simulateBattle reports on uncommitted data', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const before = tools.simulateBattle(session, { party: [{ actorId: 1, level: 5 }], troopId: 1, trials: 100 });
+    // Buff the Slime past what a level 5 actor can chew through, without committing.
+    tools.upsertDatabase(session, 'enemies', [{ id: 1, params: [9999, 0, 200, 300, 10, 10, 12, 10] }]);
+    const after = tools.simulateBattle(session, { party: [{ actorId: 1, level: 5 }], troopId: 1, trials: 100 });
+
+    expect(before.winRate).toBeGreaterThan(after.winRate);
+    expect(after.winRate).toBe(0);
+  });
+
   it('diff/commit/rollback wrap ProjectSession\'s transaction API', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

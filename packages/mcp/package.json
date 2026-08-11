@@ -16,6 +16,7 @@
     "@rmmz-kit/core": "*",
     "@rmmz-kit/compiler": "*",
     "@rmmz-kit/validate": "*",
+    "@rmmz-kit/battlesim": "*",
     "zod": "^3.23.8"
   }
 }

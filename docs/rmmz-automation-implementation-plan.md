@@ -2,13 +2,15 @@
 
 版本 0.1 ・ 2026-08-11
 
+> 進度現況見 `CLAUDE.md`（single source of truth），本文件不重複維護 status。
+
 ---
 
 ## 0. 範圍與命名對齊
 
 先把兩套編號對齊，避免混淆：
 
-- **L0–L6** 是**架構分層**（software layers），是你要蓋的東西。
+- **L0–L6，另有 L3.5、L4.5 兩個半層（共九層）** 是**架構分層**（software layers），是你要蓋的東西。
 - **Lv1–Lv10** 是**自動化等級**（capability levels），是你想達成的目標。
 
 兩者的關係不是一對一，而是「幾個層一起解鎖一個等級」：
@@ -25,6 +27,23 @@
 | **L5** 執行期 | headless 遊戲 + 測試插件 + 斷言 | **Lv6, Lv7（動態）** |
 | **L6** Agent loop | plan → generate → validate → test → repair | **Lv8, Lv9** |
 | — | — | Lv10 不在本計畫範圍，見 §7 |
+
+### Lv1–Lv9 定義
+
+| Lv | 代表能力 | 大致驗收方式 |
+|---|---|---|
+| **Lv1** | 用 DSL 寫出單一事件並編譯成合法 command 陣列 | M3 round-trip 測試 |
+| **Lv2** | 讀懂既有事件（decompile 成 DSL 給 LLM 看） | M3 decompile 測試 |
+| **Lv3（結構）** | 透過 MCP 工具新增/修改資料庫列與地圖事件 | M5 acceptance（見下） |
+| **Lv3（平衡）** | 新增的戰鬥/數值改動不會明顯破壞平衡 | M6 模擬勝率誤差 < 10% |
+| **Lv4** | 生成連通、事件可達的地圖 | M7 acceptance |
+| **Lv5** | 靜態驗證擋下常見錯誤（懸空參照、結構錯誤） | M4 acceptance |
+| **Lv6** | headless 跑起遊戲並做狀態斷言 | M8 acceptance |
+| **Lv7（靜態/動態）** | 靜態規則 + 動態測試合起來覆蓋語意錯誤 | M4 + M8 acceptance 合併判定 |
+| **Lv8** | 自動修復 agent 能在靜態/動態錯誤回饋下重生成並收斂 | M9 acceptance |
+| **Lv9** | 一句話生成可完整通關的小型 RPG | M10 acceptance |
+
+Lv10 見 §7。
 
 ### 非目標（明確排除）
 
@@ -108,6 +127,9 @@ rmmz-kit/
 
 我把兩個 repo clone 下來實讀過。以下是逐檔判定。
 
+> M0–M5 已完成遷移，本節為當時（規劃階段）的盤點紀錄，非目前待辦清單。少數項目
+> 判定為「直接搬」但實際實作時改走別的路線，已在對應列註明。
+
 ### 2.1 `k4zuki0539/-rpgmaker-mz-mcp`（2,098 LOC，無測試）
 
 | 檔案 | 判定 | 說明 |
@@ -124,10 +146,10 @@ rmmz-kit/
 
 | 檔案 | 判定 | 說明 |
 |---|---|---|
-| `resources/event_commands.json` (295行) | ✅ **直接搬，需擴充** | 16 個 event command code 的參數 schema（日文註解）。這是 L2 編譯器的字典種子。目前只涵蓋 101/401/102/402/403/404/111/411/412/112/413/113/121/122/231/0，要擴充到 §4.3 的 Tier 1+2 約 35 個。 |
-| `utils/constants.js` 的 `EVENT_CODES` | ✅ **直接搬** | code 常數表。 |
-| `handlers/plugins.ts` (133行) | ✅ **直接搬** | `js/plugins.js` 是 `var $plugins = [...]` 這種 JS 而非 JSON，解析與回寫很煩人，這段幫你處理掉了。含 path traversal 防護與檔名 sanitize。 |
-| `utils/commandAnnotator.js` | ✅ **直接搬** | 把 raw command 陣列標註成人類可讀。對 debug 與「讓 LLM 讀懂現有事件」都必要。 |
+| `resources/event_commands.json` (295行) | ⛔ **未採用** | 原判定「直接搬」，實作時改為把 command code 直接硬編在 `packages/compiler/src/ir.ts`/`emit.ts`，沒有用這份 JSON 字典。 |
+| `utils/constants.js` 的 `EVENT_CODES` | ⛔ **未採用** | 同上，code 常數直接寫在 `ir.ts`/`emit.ts` 裡。 |
+| `handlers/plugins.ts` (133行) | ⛔ **未採用** | `js/plugins.js` 解析目前沒有任何套件讀取；fixture 雖含此檔，但沒有對應功能。留待有需求時再做。 |
+| `utils/commandAnnotator.js` | ⛔ **未採用** | 沒有搬；`packages/compiler`的 decompiler（`decompile.ts`）取代了「讓 LLM 讀懂現有事件」這個用途。 |
 | `utils/logger.js` / `utils/errors.js` | ✅ **直接搬** | 結構化錯誤與日誌，寫得規矩，省時間。 |
 | `utils/mapHelpers.ts` | 🔶 **改寫後用** | `getEventPageList` 的邏輯可用；`loadMapData`/`saveMapData` 要換成 session 版本。 |
 | `test_project/` | ✅ **直接搬** | 現成的最小 MZ 專案 fixture（含 `game.rmmzproject`、`index.html`、`data/*.json`、`js/plugins.js`）。省你手動造測試資料，**第一天就用得上**。 |
@@ -136,7 +158,7 @@ rmmz-kit/
 | `handlers/playtest.ts` (356行) 的 **http server 部分** | ✅ **搬這一半** | `http.createServer` + `serve-handler` 起本地站台餵 `index.html` 給瀏覽器，這段 scaffolding 直接可用。 |
 | `handlers/playtest.ts` 的 **Game.exe + `screenshot-desktop`** 分支 | ❌ **不要用** | 抓原生視窗截圖，Windows-only 且極脆。統一走瀏覽器路線。 |
 | `automation/lib/mz_driver.js` (105行) | ❌ **只當反面教材** | `page.keyboard.press('ArrowUp')` + `setTimeout(200)` 模擬移動、靠文字比對點 UI（註解自己寫 "This is a heuristic"）。沒有加速、沒有決定性、沒有狀態斷言。這正是 §4.6 要換掉的路線。 |
-| `utils/gameStateInspector.ts` | ⚠️ **分兩種用途** | 白名單只允許 `$gameSwitches.value(n)` 這類讀取。**production MCP 保留這個白名單**（安全），但**測試 harness 不能用**——測試需要 dump 完整狀態，白名單會擋死。兩條路徑要分開。 |
+| `utils/gameStateInspector.ts` | ⚠️ **分兩種用途，M5 未採用** | 白名單只允許 `$gameSwitches.value(n)` 這類讀取。**production MCP 保留這個白名單**（安全），但**測試 harness 不能用**——測試需要 dump 完整狀態，白名單會擋死。兩條路徑要分開。**現況**：`packages/mcp` 沒有這層白名單，M5 已 merge；見 §6 R8。 |
 | `schemas/mz_structures.js` (80行) | 🔶 **參考** | 內容比 k4zuki 的 types.ts 薄。 |
 
 ### 2.3 盤點結論
@@ -205,7 +227,8 @@ rmmz-kit/
 
 **驗收**：
 - Round-trip 測試：`decompile(compile(dsl)) === dsl`
-- 對 fixture 既有事件做 `compile(decompile(x)) === x`（bit-exact）
+- 對 fixture 既有事件做 `decompile(compile(decompile(x))) === decompile(x)`（idempotent——
+  emit 一律寫回完整正典參數陣列，因此不保證對任意既有資料 byte-identical，只保證穩定）
 - 隨機生成 1000 份 DSL，編譯結果 100% 通過結構檢查
 
 ---
@@ -224,9 +247,11 @@ rmmz-kit/
 
 ### M5 — L3 MCP 工具層 ・ 1 週
 
-薄 adapter。工具顆粒度見 §4.5。保留 rein 的 `gameStateInspector` 白名單當安全層。
+薄 adapter。工具顆粒度見 §4.5。~~保留 rein 的 `gameStateInspector` 白名單當安全層~~
+——**未實作**，`packages/mcp` 目前沒有這層白名單，見 §6 R8。
 
-**驗收**：Claude Desktop 接上能完成「在 Map001 加一個賣藥水的 NPC」。
+**驗收**：Claude Desktop 接上能完成「在 Map001 加一個賣藥水的 NPC」。（已達成，見 §4.5
+實際交付清單。）
 
 ---
 
@@ -437,6 +462,8 @@ event:
 230  等待              250  播放 SE
 ```
 
+（「約 15 個」以命令組計，展開的 code 數約 19 個，已於 M3 全數實作。）
+
 **Tier 2（累計 ~95%，約 20 個）**
 
 ```
@@ -449,6 +476,8 @@ event:
 311–318  HP/MP/狀態/回復/EXP/等級/能力/技能
 355/655  腳本          357  插件指令（MZ 結構化）
 ```
+
+（「約 20 個」以命令組計，展開的 code 數約 33 個；截至 M5 尚未實作，屬 L2 Tier 2/3，M6 以後才排入。）
 
 **Tier 3（視需求，不急）**：231–235 圖片系統、261 影片、載具、281–285 地圖顯示設定、331–333 敵人操作。
 
@@ -484,7 +513,8 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 
 ### 4.5 MCP 工具顆粒度
 
-不要學參考專案做 28–35 個 CRUD 工具。建議 **12–18 個**：
+不要學參考專案做 28–35 個 CRUD 工具。建議 **12–18 個**。下方每項標註交付的里程碑；
+沒標的都是 M5 已交付。
 
 **讀（走 MCP resources 而非 tools）**
 - `rmmz://project/summary`、`rmmz://map/{id}`、`rmmz://database/{table}`、`rmmz://asset-catalog`
@@ -492,13 +522,21 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 `asset-catalog` 特別重要：MZ 內建素材是固定的（44 角色圖 / 31 tileset / 120 動畫 / 48 BGM / 345 SE），把清單當 resource 餵給模型，**它就只能從既有清單挑，不會幻想出不存在的檔名**。這一招對降低錯誤率的效果超乎比例。
 
 **寫（宣告式）**
-- `apply_script(dsl)` — 主要入口，走 L2 編譯器
-- `upsert_database(table, entries)` — 走 schema 驗證
-- `compose_map(spec)` — 走 L3.5
+- `apply_script(dsl)` — 主要入口，走 L2 編譯器；唯一寫入 `list`（事件命令）的工具
+- `upsert_map_event(...)` — M5 實際交付，§4.5 規劃時漏列：full-replace 一個事件的
+  metadata + pages（condition/trigger/image），刻意不碰 `list`，避免「移動 NPC 一格」
+  誤刪對話（新頁繼承舊頁的 `list`，新增頁才是空的）
+- `upsert_database(table, entries)` — 走 schema 驗證，shallow merge 到既有列或
+  `IdAllocator` 配新 ID
+- `compose_map(spec)` — **M7**，走 L3.5，目前不存在
 - `allocate_namespace(name, counts)`
 
 **驗證 / 測試**
-- `validate()`、`simulate_battle(spec)`、`playtest(scenario)`、`coverage()`
+- `validate()` — M5 已交付（`@rmmz-kit/validate`）
+- `simulate_battle(spec)` — **M6** 已交付（`@rmmz-kit/battlesim`），對 session 的記憶體狀態跑，
+  未 commit 的改動也能先問「這樣平衡壞了沒」
+- `playtest(scenario)` — **M8**，目前不存在
+- `coverage()` — **M8**，目前不存在
 
 **事務**
 - `commit(message)`、`rollback()`、`diff()`
@@ -526,7 +564,7 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 | 本地站台 | `serve-handler` + `http` | 搬 rein 的 |
 | DSL 格式 | YAML（`yaml` 套件） | LLM 產出 YAML 的正確率高於 JSON，且可讀 |
 | Schema 驗證 | Zod | 型別與執行期驗證共用一份定義 |
-| 版本控制 | `simple-git` | 取代 `.bak` 備份機制 |
+| 版本控制 | 直接 shell 出去呼叫 `git` binary（~~`simple-git`~~） | 取代 `.bak` 備份機制；改用 binary 是因為測試本來就要求 PATH 上有 `git`，省一個依賴 |
 
 ---
 
@@ -541,6 +579,7 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 | **R5** | 地圖生成美觀度不達標，Lv4 卡住 | 中 | 中 | prefab 路線（人工做模板）是保底；純程序生成當 stretch goal |
 | **R6** | MZ 內建素材**僅授權用於 MZ/MV 專案** | 低（本計畫）/ 高（Lv10） | — | 本計畫範圍內無影響；商業化路線需另行處理 |
 | **R7** | 復合成功率塌陷（各層 85% 串起來變 40%） | 高 | 高 | 這正是 M9 repair loop 存在的理由——它不是加分項，是讓復合成功率不塌的必要條件 |
+| **R8** | M5 交付的 MCP 工具層沒有 `gameStateInspector` 式的白名單（§2.2），`apply_script` 能寫入任意 DSL | 中 | 中 | 目前僅在受信任的單機 agent 情境使用；若要對外開放或多租戶，補一層 production 白名單再上線 |
 
 ---
 
@@ -556,10 +595,15 @@ Lv10（長篇商業 RPG 全自動）**刻意不在本計畫範圍內**，理由�
 
 ---
 
-## 8. 建議的起手三步
+## 8. 下一步
 
-1. **今天**：clone 兩個 repo，把 `rein/test_project/` 搬成 fixture，把 k4zuki 的 `types.ts` 搬進來補齊。半天內就有可跑的東西。
-2. **第一週**：M1 的原子寫入 + compact JSON。先解決「寫回去不會爆」這件事，這是後面一切的前提。
-3. **第二～三週**：M3 的 Tier 1 編譯器（15 個 command code）。做完 round-trip 測試通過的那一刻，你就知道這條路走得通了——**那是整個專案最重要的驗證點**。
+M0–M6 已完成（見 `CLAUDE.md` status）。§8 原本的「起手三步」已全部達成，改列目前真正的下一步：
 
-如果 Tier 1 編譯器兩週內做不出來，代表對 MZ 事件格式的理解還不夠，應該先補課而不是往前推進。
+1. **決定 issue #7**：`rmmz-mcp` bin 目前無法啟動（workspace `main` 指向 TypeScript
+   原始碼，編譯後的 `dist/bin.js` 解不到 `@rmmz-kit/core`）。`CLAUDE.md` 把這標成
+   「M6 前要決定」，M6 不依賴它所以先做了，但這條擋著「真的能被 Claude Desktop 接上」；
+   解法是五個套件都加 `exports` map + 自訂 condition，外加 `tsconfig.base.json` 的
+   `customConditions`。
+2. **M7 地圖合成**或 **M8 headless 測試框架**：M6 已驗證「靜態鏈 + 動態驗證」有價值，
+   照 §6 R2 的建議，M8 投入前先確認 timebox。
+3. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。

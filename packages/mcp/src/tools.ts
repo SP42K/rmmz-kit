@@ -11,6 +11,7 @@ import type {
 import { IdAllocator, mapFileName } from '@rmmz-kit/core';
 import { compile, parseDsl } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
+import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesim';
 import { DATABASE_TABLES } from './tables.js';
 
 /**
@@ -207,6 +208,15 @@ export function allocateNamespace(
 
 export function validate(session: ProjectSession): Promise<Finding[]> {
   return validateProject(session);
+}
+
+/**
+ * Runs the L4.5 simulator (§4.5's `simulate_battle`) against the *in-memory*
+ * session, so a balance question can be asked about an edit that hasn't been
+ * committed yet — the point of pairing it with the transaction model.
+ */
+export function simulateBattle(session: ProjectSession, spec: BattleSpec): BattleReport {
+  return simulate(session, spec);
 }
 
 export function commit(session: ProjectSession, message: string): Promise<string | null> {
