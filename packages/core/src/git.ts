@@ -32,7 +32,15 @@ export class GitRepo {
     await this.run(['add', '--', ...filePaths]);
   }
 
-  async commit(message: string): Promise<string> {
+  /** Commits whatever is staged. Returns null (not an error) if nothing is. */
+  async commit(message: string): Promise<string | null> {
+    // `git commit` exits non-zero on an empty index, which happens routinely:
+    // an edit that re-serializes byte-identical to HEAD stages nothing. That
+    // is "nothing to record", not a failure the caller should have to parse
+    // out of stderr. (--name-only is safe on an unborn HEAD.)
+    if ((await this.run(['diff', '--cached', '--name-only'])).trim().length === 0) {
+      return null;
+    }
     await this.run(['commit', '-m', message]);
     return (await this.run(['rev-parse', 'HEAD'])).trim();
   }

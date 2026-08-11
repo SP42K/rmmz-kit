@@ -150,5 +150,33 @@ describe('ProjectSession', () => {
     expect(() => JSON.parse(systemText)).not.toThrow();
     expect(() => JSON.parse(actorsText)).not.toThrow();
     expect(actorsText).toBe(actorsBefore);
+
+    // The session must not blame its own successful write on an external
+    // editor: the file it wrote before the failure is reconciled (baseline
+    // and mtime snapshot both refreshed), so the session stays usable.
+    expect((await session.validate()).errors).toEqual([]);
+    expect(await session.commit('feat: retry after the failed write')).not.toBeNull();
+    expect(await readFile(path.join(dir, 'data/Actors.json'), 'utf-8')).toContain('Crash Test Actor');
+  });
+
+  it('an edit that re-serializes byte-identical to HEAD commits nothing instead of failing', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    // First commit normalizes the pretty-printed fixture to compact JSON, so
+    // the second session's identical edit really does stage zero bytes.
+    const first = await openProject(dir);
+    first.updateFile<{ gameTitle: string }>('System.json', (data) => {
+      data.gameTitle = 'Same Title';
+    });
+    expect(await first.commit('feat: set title')).not.toBeNull();
+
+    const second = await openProject(dir);
+    second.updateFile<{ gameTitle: string }>('System.json', (data) => {
+      data.gameTitle = 'Same Title';
+    });
+    expect(await second.commit('feat: no actual change')).toBeNull();
+    // ...and the session is still usable afterwards.
+    expect((await second.validate()).errors).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { atomicWriteFile } from '../src/io/atomicWrite.js';
@@ -36,11 +36,16 @@ describe('atomicWriteFile', () => {
 
   it('cleans up the temp file and rethrows if rename fails', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'rmmz-atomic-fail-'));
-    // Renaming into a directory that doesn't exist forces rename() to fail.
-    const target = path.join(dir, 'missing-subdir', 'data.json');
+    // The target must be writable-adjacent but un-renameable-over, or the
+    // temp write fails first and the rename path never runs: a non-empty
+    // directory in the target's place is exactly that.
+    const target = path.join(dir, 'data.json');
+    await mkdir(target);
+    await writeFile(path.join(target, 'occupant'), 'x');
 
     await expect(atomicWriteFile(target, 'content')).rejects.toThrow();
-    expect(await readdir(dir)).toEqual([]);
+    // The .tmp file is gone; only the blocking directory remains.
+    expect(await readdir(dir)).toEqual(['data.json']);
 
     await rm(dir, { recursive: true, force: true });
   });
