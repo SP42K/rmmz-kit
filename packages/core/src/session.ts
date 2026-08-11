@@ -32,7 +32,7 @@ export class ProjectSession {
   private readonly git: GitRepo;
 
   private constructor(
-    private readonly rootPath: string,
+    readonly rootPath: string,
     private readonly dataDir: string,
     private readonly files: Map<string, unknown>,
     private readonly originalText: Map<string, string>,

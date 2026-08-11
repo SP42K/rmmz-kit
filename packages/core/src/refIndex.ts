@@ -45,6 +45,14 @@ export class RefIndex {
     return this.byRef.get(key(kind, id)) ?? [];
   }
 
+  /** Every (kind, id) actually referenced somewhere, with its locations. Used by L4 to check each id against its owning table without re-scanning commands itself. */
+  entries(): Array<{ kind: RefKind; id: number; locations: RefLocation[] }> {
+    return [...this.byRef.entries()].map(([k, locations]) => {
+      const [kind, idStr] = k.split(':') as [RefKind, string];
+      return { kind, id: Number(idStr), locations };
+    });
+  }
+
   private add(loc: RefLocation): void {
     const k = key(loc.kind, loc.id);
     const list = this.byRef.get(k);
