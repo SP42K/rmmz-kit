@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { readdir } from 'node:fs/promises';
 import type { ProjectSession, RefKind, SystemData, MapData } from '@rmmz-kit/core';
-import { RefIndex } from '@rmmz-kit/core';
+import { RefIndex, mapFileName } from '@rmmz-kit/core';
 import type { Finding } from '../types.js';
 import type { ListContext } from '../walk.js';
 import { forEachCommandList, tryDecompile, walkNodes } from '../walk.js';
@@ -80,10 +80,6 @@ function checkDanglingIds(session: ProjectSession, findings: Finding[]): void {
       }
     }
   }
-}
-
-function mapFileName(id: number): string {
-  return `Map${String(id).padStart(3, '0')}.json`;
 }
 
 function checkTransferBounds(session: ProjectSession, findings: Finding[]): void {

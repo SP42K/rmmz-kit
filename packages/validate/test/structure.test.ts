@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { openProject, type MapData } from '@rmmz-kit/core';
 import { checkStructure } from '../src/rules/structure.js';
 import { makeTestProject } from './testProject.js';
@@ -70,6 +72,19 @@ describe('checkStructure', () => {
     });
     const findings = checkStructure(session);
     expect(findings.some((f) => f.rule === 'structure/break-outside-loop')).toBe(true);
+  });
+
+  it('survives a common event with no `list` at all instead of crashing', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    await writeFile(
+      path.join(dir, 'data', 'CommonEvents.json'),
+      JSON.stringify([null, { id: 1, name: 'Half-built', trigger: 0, switchId: 0 }])
+    );
+    const session = await openProject(dir);
+    // MCP's upsert_database shallow-merges, so a row can exist before its list
+    // does. Every rule reads the list through walk.ts's forEachCommandList.
+    expect(() => checkStructure(session)).not.toThrow();
   });
 
   it('does not flag Break Loop inside a loop', async () => {

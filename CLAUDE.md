@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `rmmz-kit` — a monorepo toolchain for automating RPG Maker MZ projects (edit `data/*.json`,
-compile events, validate, headless-test). Not an MCP server: MCP is planned as a thin adapter
-over the core library, so the value lives in `packages/core` and future compiler/validator packages.
+compile events, validate, headless-test). `packages/mcp` is the thin MCP adapter the plan calls
+for; the value still lives in `packages/core`/`compiler`/`validate` — the MCP layer is plumbing,
+not logic.
 
 The full roadmap is `docs/rmmz-automation-implementation-plan.md` (Chinese). It defines the layer
 naming (L0 I/O → L1 data model → L2 event compiler → L3 MCP → L4 validator → L5 headless runtime)
@@ -17,8 +18,9 @@ deliberately rejected.
 Status: M1 / L0 done (project I/O + transaction). M2 / L1 done (data model types,
 ID allocator, reference index). M3 / L2 Tier 1 done (`packages/compiler`: YAML DSL,
 IR, emit, decompile — see below). M4 / L4 done (`packages/validate`: structure,
-reference-integrity, and semantic/graph rules — see below). L2 Tier 2/3 and
-everything from M5 onward not started.
+reference-integrity, and semantic/graph rules — see below). M5 / L3 done
+(`packages/mcp`: MCP tool/resource layer — see below). L2 Tier 2/3 and
+everything from M6 onward not started.
 
 ## Commands
 
@@ -29,6 +31,7 @@ npx vitest run -t "rollback"                   # one test by name
 npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
 npx tsc -p packages/compiler/tsconfig.json --noEmit
 npx tsc -p packages/validate/tsconfig.json --noEmit
+npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
 
@@ -146,6 +149,38 @@ what's covered instead).
 
 This is independent of `ProjectSession.validate()` (drift + JSON-serializability, gates `commit()`)
 — `validateProject()` is a separate pass an agent or human runs before deciding to commit at all.
+
+### L3 MCP tool layer (`packages/mcp`)
+
+`server.ts`'s `createServer(session)` is the entire adapter: every `registerTool`/`registerResource`
+handler is a one-line call into `tools.ts`/`resources.ts`, which hold the actual logic as plain
+functions over a `ProjectSession` and are unit-tested without any MCP transport (`test/tools.test.ts`,
+`test/resources.test.ts`). `test/server.test.ts` covers the wiring itself, connecting a real
+`McpServer`/`Client` pair over the SDK's `InMemoryTransport` — including the plan's own M5
+acceptance scenario ("在 Map001 加一個賣藥水的 NPC") end to end over the protocol. `bin.ts` is the
+stdio entry point a client like Claude Desktop launches (`node dist/bin.js <project-path>`, after
+`npm run build`).
+
+Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
+(`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
+plus 8 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `allocate_namespace`,
+`validate`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`, `simulate_battle`,
+`playtest`, and `coverage` — all omitted here because they front L3.5/L4.5/L5 (M7/M6/M8), which
+don't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
+decision A (MCP is a thin transport over real logic, not the other way around).
+
+`apply_script` and `upsert_map_event` are deliberately split: `upsert_map_event` is a full-replace
+declarative write of one event's metadata + pages (conditions/trigger/image — nothing that makes
+sense read independently); `apply_script` is the only
+thing that ever writes `list`, compiling a DSL string through `@rmmz-kit/compiler`. Structure and
+behavior stay separately editable this way — which is why "full replace" stops at the page's `list`:
+page N inherits the list of the page N it replaced (a new page starts empty), so
+`upsert_map_event` to move an NPC one tile can't silently delete its dialogue. `upsert_database` is the opposite: a shallow merge onto
+whatever row already has that id (or a new row via `IdAllocator.allocEntityId`), since Actor/Item/
+.../Troop fields don't have the same "only makes sense together" coupling a page's fields do — and
+per-table Zod schemas for all ten tables is exactly the upfront modeling §4.5 says not to build
+ahead of need. `ProjectSession.dirtyFiles()` (a small core addition, same pattern as `RefIndex.entries()`
+for M4) backs the `diff` tool.
 
 ### Legacy JS carried over
 
