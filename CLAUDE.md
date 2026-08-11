@@ -15,7 +15,9 @@ starting a new milestone** — it records why decisions were made and which refe
 deliberately rejected.
 
 Status: M1 / L0 done (project I/O + transaction). M2 / L1 done (data model types,
-ID allocator, reference index). L2 onward not started.
+ID allocator, reference index). M3 / L2 Tier 1 done (`packages/compiler`: YAML DSL,
+IR, emit, decompile — see below). L2 Tier 2/3 and everything from M4 onward not
+started.
 
 ## Commands
 
@@ -63,6 +65,41 @@ Only dirty files are written. `updateFile()` marks dirty; `readFile()` must not.
 - `io/atomicWrite.ts` — temp file **in the same directory** + rename. Same-volume placement is
   what makes the rename atomic; do not move temp files to the system temp dir.
 - `git.ts` — shells out to the `git` binary rather than depending on `simple-git`.
+
+### L2 event compiler (`packages/compiler`)
+
+`ir.ts` defines a tree (`Node[]`) with one variant per Tier 1 command group
+(§4.3 of the plan: text, comment, if/else, choice, loop, set-switch,
+set-variable, self-switch, common-event call, transfer, wait, play-SE) plus
+`RawNode`, a code+parameters passthrough for anything else. `emit.ts`
+(`compile`) walks the tree into a flat `EventCommand[]`, deriving `indent`
+from tree depth — indent is never hand-tracked. `decompile.ts` is the exact
+inverse: a recursive-descent parser over the flat list that groups by
+indent+code back into the same tree, falling back to `RawNode` for any code
+or operand shape (e.g. a Control Variables command with a variable operand
+instead of a constant) it doesn't model. This `RawNode` fallback is what
+makes decompiling an arbitrary existing project safe — nothing outside Tier 1
+is ever silently dropped, only left unparsed.
+
+`dsl/` is the YAML authoring surface an LLM/human writes (plan §4.2), a Zod
+schema (`schema.ts`) over a much smaller "Step" shape, `parse.ts` compiling
+YAML → IR, `print.ts` decompiling IR → YAML (used to show an LLM an existing
+event as text). The DSL addresses switches/variables by raw numeric id —
+the plan's namespaced expression sugar (`quest.herb.started`) is a
+`IdAllocator`-aware layer that would sit on top of this and is not built yet.
+
+Two R1-class assumptions specific to this package (undocumented MZ format,
+see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
+- Every Show Choices branch (402/403 body) always emits a trailing
+  `{code:0}` filler at the branch's indent — inferred from
+  `fixtures/minimal-project`, the only ground truth available; decompile
+  treats the filler as optional (present or not) rather than required.
+- `emit.ts` always writes the full canonical parameter array for a command
+  (e.g. Show Choices' 5-element `[choices, cancelType, defaultType,
+  positionType, background]`), even when decompiling data that had a
+  shorter/older array. Round-tripping through this compiler is therefore
+  idempotent (`decompile(compile(x))` is stable) but not always byte-identical
+  to arbitrary pre-existing data — see `decompile.test.ts`'s fixture test.
 
 ### Legacy JS carried over
 

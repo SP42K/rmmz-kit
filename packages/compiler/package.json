@@ -1,0 +1,16 @@
+{
+  "name": "@rmmz-kit/compiler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@rmmz-kit/core": "*",
+    "yaml": "^2.9.0",
+    "zod": "^3.23.8"
+  }
+}
