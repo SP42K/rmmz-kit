@@ -116,23 +116,27 @@ function checkTransferBounds(session: ProjectSession, findings: Finding[]): void
  * every reference — real signal only comes once the directory exists.
  */
 async function checkAssets(session: ProjectSession, findings: Finding[]): Promise<void> {
-  const dirCache = new Map<string, string[] | null>();
-  async function listDir(rel: string): Promise<string[] | null> {
-    if (!dirCache.has(rel)) {
-      try {
-        dirCache.set(rel, await readdir(path.join(session.rootPath, rel)));
-      } catch {
-        dirCache.set(rel, null);
-      }
+  // Caches the *promise*, not the resolved value: every check() below runs
+  // concurrently, so caching after the await would let a project with N face
+  // references fire N readdir calls on the same directory before the first
+  // one lands. Extensions are stripped once per directory, not once per
+  // reference, for the same reason.
+  const dirCache = new Map<string, Promise<string[] | null>>();
+  function listDir(rel: string): Promise<string[] | null> {
+    let pending = dirCache.get(rel);
+    if (!pending) {
+      pending = readdir(path.join(session.rootPath, rel))
+        .then((entries) => entries.map((f) => f.replace(/\.[^./]+$/, '')))
+        .catch(() => null);
+      dirCache.set(rel, pending);
     }
-    return dirCache.get(rel)!;
+    return pending;
   }
 
   async function check(rel: string, name: string | undefined, ctx: { file: string; path: string }): Promise<void> {
     if (!name) return;
-    const entries = await listDir(rel);
-    if (!entries) return;
-    const stripped = entries.map((f) => f.replace(/\.[^./]+$/, ''));
+    const stripped = await listDir(rel);
+    if (!stripped) return;
     if (stripped.includes(name)) return;
     const caseInsensitiveMatch = stripped.find((f) => f.toLowerCase() === name.toLowerCase());
     findings.push({

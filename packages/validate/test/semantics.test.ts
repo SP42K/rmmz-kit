@@ -43,6 +43,21 @@ describe('checkSemantics', () => {
     expect(findings.filter((f) => f.rule === 'semantics/dead-event-page')).toEqual([]);
   });
 
+  it('does not flag pages gated on the same variable at different thresholds', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      // var 1 >= 5 then var 1 >= 10: page 2 wins from 10 up, page 1 still runs
+      // for 5..9, so neither is dead. Ignoring the threshold would call page 1 dead.
+      const early = page([], { conditions: blankConditions({ variableValid: true, variableId: 1, variableValue: 5 }) });
+      const late = page([], { conditions: blankConditions({ variableValid: true, variableId: 1, variableValue: 10 }) });
+      data.events.push(mapEvent(2, 'Quest stages', [early, late]));
+    });
+    const findings = checkSemantics(session);
+    expect(findings.filter((f) => f.rule === 'semantics/dead-event-page')).toEqual([]);
+  });
+
   it('flags a self switch turned on but never reset anywhere in the event', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
@@ -117,13 +132,21 @@ describe('checkSemantics', () => {
         { code: 125, indent: 1, parameters: [1, 0, 500] },
         { code: 412, indent: 0, parameters: [] },
       ];
+      // parameters[2] = 1 is "Gold <= 500", the opposite check — not a guard.
+      const backwards = [
+        { code: 111, indent: 0, parameters: [7, 500, 1] },
+        { code: 125, indent: 1, parameters: [1, 0, 500] },
+        { code: 412, indent: 0, parameters: [] },
+      ];
       data.events.push(mapEvent(2, 'Unguarded', [page(unguarded)]));
       data.events.push(mapEvent(3, 'Guarded', [page(guarded)]));
+      data.events.push(mapEvent(4, 'Backwards guard', [page(backwards)]));
     });
     const findings = checkSemantics(session);
     const negGold = findings.filter((f) => f.rule === 'semantics/possible-negative-gold');
     expect(negGold.some((f) => f.path?.includes('event 2'))).toBe(true);
     expect(negGold.some((f) => f.path?.includes('event 3'))).toBe(false);
+    expect(negGold.some((f) => f.path?.includes('event 4'))).toBe(true);
   });
 
   it('flags Change Items decrease with no enclosing has-item guard, and not one that has a guard', async () => {

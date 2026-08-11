@@ -23,10 +23,13 @@ function conditionKeys(c: EventConditions): Set<CondKey> {
   if (c.selfSwitchValid) keys.add(`selfSwitch:${c.selfSwitchCh}`);
   if (c.itemValid) keys.add(`item:${c.itemId}`);
   if (c.actorValid) keys.add(`actor:${c.actorId}`);
-  // Threshold ignored on purpose: treating "variable >= N" as just "variable"
-  // makes the subset check conservative (may under-report a page pair whose
-  // thresholds actually diverge) rather than needing a constraint solver.
-  if (c.variableValid) keys.add(`variable:${c.variableId}`);
+  // The threshold is part of the key. Dropping it would *weaken* the later
+  // page's key and make "var >= 10" look implied by "var >= 5", reporting a
+  // perfectly live page as dead. Requiring an exact match instead is the
+  // conservative direction: a genuinely shadowed pair with diverging
+  // thresholds (page 2 "var >= 3" over page 1 "var >= 5") goes unreported,
+  // which needs a constraint solver to do properly.
+  if (c.variableValid) keys.add(`variable:${c.variableId}>=${c.variableValue}`);
   return keys;
 }
 

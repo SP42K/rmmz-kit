@@ -115,7 +115,10 @@ export function walkNodes(nodes: Node[], visit: (node: Node, guards: Guards) => 
 function extendGuard(guards: Guards, condition: Condition): Guards {
   if (condition.type !== 'raw') return guards;
   const params = condition.parameters as number[];
-  if (params[0] === 7) return { ...guards, gold: true };
+  // Gold's parameters[2] is the comparison: 0 = ">=", 1 = "<=", 2 = "<". Only
+  // ">=" bounds the balance from below, so only it guards a decrease — the
+  // other two are the opposite check. (MV data may omit it; default ">=".)
+  if (params[0] === 7 && (params[2] ?? 0) === 0) return { ...guards, gold: true };
   if (params[0] === 8) return { ...guards, items: new Set([...guards.items, params[1]]) };
   return guards;
 }
