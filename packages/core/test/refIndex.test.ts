@@ -37,6 +37,8 @@ function npcReferencingItem3(): MapEvent {
         image: { characterIndex: 0, characterName: '', direction: 2, pattern: 1, tileId: 0 },
         list: [
           { code: 121, indent: 0, parameters: [5, 5, 0] },
+          { code: 122, indent: 0, parameters: [7, 8, 0, 0, 1] },
+          { code: 111, indent: 0, parameters: [1, 9, 0, 1, 0] },
           { code: 111, indent: 0, parameters: [8, 3, 0] },
           { code: 126, indent: 0, parameters: [3, 0, 0, 0, 1] },
           { code: 117, indent: 0, parameters: [1] },
@@ -89,6 +91,10 @@ describe('RefIndex', () => {
 
     const index = RefIndex.build(session);
     expect(index.referencesTo('switch', 5)).toHaveLength(1);
+    // Control Variables 7..8, plus the variable read by the conditional branch.
+    expect(index.referencesTo('variable', 7)).toHaveLength(1);
+    expect(index.referencesTo('variable', 8)).toHaveLength(1);
+    expect(index.referencesTo('variable', 9)).toHaveLength(1);
     expect(index.referencesTo('map', 1)).toHaveLength(1);
     expect(index.referencesTo('commonEvent', 1)).toHaveLength(1);
     expect(index.referencesTo('item', 999)).toEqual([]);

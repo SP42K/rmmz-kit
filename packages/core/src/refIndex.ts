@@ -1,5 +1,5 @@
 import { ProjectSession } from './session.js';
-import { EventCommand, EventPage, MapData } from './types/mz.js';
+import { CommonEvent, EventCommand, EventPage, MapData } from './types/mz.js';
 
 export type RefKind = 'switch' | 'variable' | 'item' | 'actor' | 'map' | 'commonEvent';
 
@@ -26,9 +26,15 @@ export class RefIndex {
       if (/^Map\d+\.json$/.test(file)) {
         index.scanMap(session.readFile<MapData>(file), file);
       } else if (file === 'CommonEvents.json') {
-        const events = session.readFile<Array<{ id: number; list: EventCommand[] } | null>>(file);
-        for (const event of events) {
-          if (event) index.scanCommands(event.list, file, `commonEvent ${event.id}`);
+        for (const event of session.readFile<Array<CommonEvent | null>>(file)) {
+          if (!event) continue;
+          const path = `commonEvent ${event.id}`;
+          // trigger 0 = none; autorun/parallel commons are gated on switchId,
+          // which is a switch reference the command list never mentions.
+          if (event.trigger !== 0 && event.switchId) {
+            index.add({ kind: 'switch', id: event.switchId, file, path: `${path} > trigger switch` });
+          }
+          index.scanCommands(event.list, file, path);
         }
       }
     }
@@ -82,11 +88,25 @@ export class RefIndex {
           // Change Items: [itemId, ...]
           this.add({ kind: 'item', id: cmd.parameters[0], file, path: at });
           break;
-        case 111:
-        case 411: {
-          // Conditional Branch: [type, ...]; type 0 = switch, 8 = item
+        case 122: {
+          // Control Variables: [startId, endId, operationType, operand, ...].
+          // operand 1 ("variable") makes parameters[4] a second variable read.
+          const [start, end, , operand] = cmd.parameters as number[];
+          for (let id = start; id <= end; id++) this.add({ kind: 'variable', id, file, path: at });
+          if (operand === 1) this.add({ kind: 'variable', id: cmd.parameters[4], file, path: at });
+          break;
+        }
+        case 111: {
+          // Conditional Branch: [type, ...]; type 0 = switch, 1 = variable, 8 = item.
+          // 411 is *not* a second branch code — it's "Else" and carries no
+          // parameters at all, so it has nothing to index.
           const [type] = cmd.parameters as [number, ...number[]];
           if (type === 0) this.add({ kind: 'switch', id: cmd.parameters[1], file, path: at });
+          if (type === 1) {
+            this.add({ kind: 'variable', id: cmd.parameters[1], file, path: at });
+            // parameters[2] 1 = compare against another variable, held in [3].
+            if (cmd.parameters[2] === 1) this.add({ kind: 'variable', id: cmd.parameters[3], file, path: at });
+          }
           if (type === 8) this.add({ kind: 'item', id: cmd.parameters[1], file, path: at });
           break;
         }

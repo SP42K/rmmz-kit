@@ -13,6 +13,13 @@ export interface NamespaceAllocation {
  * naming a contiguous block after its owner (e.g. `quest.herb.0`) so a human
  * skimming the editor's switch list can tell which flags belong to which
  * quest — there's no separate registry to keep in sync.
+ *
+ * Caveat: "free" here means "unnamed". The editor happily lets a project use
+ * switch 20 in events without ever naming it, so this can hand out an ID that
+ * is already live game logic. Detecting that collision is L4's job per the
+ * plan (§ "同一 switch 被兩條任務線寫入"), which is why the allocator does not
+ * consult RefIndex itself — see the risk note in the plan before "fixing" it
+ * by wiring the two together.
  */
 export class IdAllocator {
   constructor(private readonly session: ProjectSession) {}
@@ -51,6 +58,11 @@ export class IdAllocator {
   }
 
   private allocNamed(field: 'switches' | 'variables', namespace: string, count: number): number[] {
+    // Guard before findContiguousFree: it scans for a run of `count` free slots
+    // and would spin forever looking for a run of length <= 0. Also keeps a
+    // no-op allocation from marking System.json dirty.
+    if (count <= 0) return [];
+
     let ids: number[] = [];
     this.session.updateFile<SystemData>('System.json', (data) => {
       const names = data[field] ?? (data[field] = []);
