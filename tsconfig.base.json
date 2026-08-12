@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "customConditions": ["rmmz-kit-source"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

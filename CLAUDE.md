@@ -163,13 +163,10 @@ functions over a `ProjectSession` and are unit-tested without any MCP transport 
 `test/resources.test.ts`). `test/server.test.ts` covers the wiring itself, connecting a real
 `McpServer`/`Client` pair over the SDK's `InMemoryTransport` — including the plan's own M5
 acceptance scenario ("在 Map001 加一個賣藥水的 NPC") end to end over the protocol. `bin.ts` is the
-intended stdio entry point for a client like Claude Desktop, but **it does not run yet**: the
-`rmmz-mcp` bin points at `dist/bin.js`, and the compiled output resolves `@rmmz-kit/core` to
-`src/session.js` because workspace `main` fields point at TypeScript sources (the "no build step
-to consume a workspace package" convention above). Making the binary work means `exports` maps
-with a custom condition on all four packages plus `customConditions` in `tsconfig.base.json` —
-deliberately not done (issue #7 holds the open decision), so for now the server is only reachable
-in-process via `createServer()`.
+stdio entry point for a client like Claude Desktop: `npm run build`, then
+`node packages/mcp/dist/bin.js <project-path>` (or the `rmmz-mcp` bin). This works because each
+package's `exports` map defaults to `dist/` while the `rmmz-kit-source` custom condition (issue #7,
+resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
@@ -260,8 +257,11 @@ not as the project's conventions — new code is TypeScript and throws plain `Er
 ## Conventions
 
 - ESM, `NodeNext` resolution: relative imports carry the `.js` extension even in TS sources.
-- Workspace packages resolve via `main`/`types` pointing straight at `src/index.ts` — no build
-  step is needed to consume `@rmmz-kit/core` from another package or from tests.
+- Workspace packages carry an `exports` map with two faces: the `rmmz-kit-source` custom
+  condition resolves to `src/index.ts` (activated by `customConditions` in `tsconfig.base.json`
+  and `resolve.conditions` in `vitest.config.ts`, so typecheck/tests need no build step), while
+  the `default` condition resolves to `dist/index.js` so plain Node can run compiled output —
+  the `rmmz-mcp` bin depends on this (issue #7). New packages must copy the same `exports` shape.
 - New packages go under `packages/<name>/` following the layout in plan §1.2, with tests in
   `packages/<name>/test/*.test.ts` (the glob `vitest.config.ts` picks up).
 - Comments explain *why*, especially where an assumption or a rejected alternative is involved;
