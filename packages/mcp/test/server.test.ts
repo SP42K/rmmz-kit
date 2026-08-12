@@ -51,6 +51,7 @@ describe('MCP server wiring', () => {
         'playtest',
         'run_scenario',
         'repair',
+        'generate_game',
         'diff',
         'commit',
         'rollback',
@@ -60,6 +61,7 @@ describe('MCP server wiring', () => {
     const { resources } = await client.listResources();
     expect(resources.map((r) => r.uri)).toContain('rmmz://project/summary');
     expect(resources.map((r) => r.uri)).toContain('rmmz://asset-catalog');
+    expect(resources.map((r) => r.uri)).toContain('rmmz://game-brief-guide');
   });
 
   /** Plan §3 M5 acceptance test: "在 Map001 加一個賣藥水的 NPC" end to end over the MCP protocol. */
@@ -409,6 +411,67 @@ describe('MCP server wiring', () => {
 
     text(await client.callTool({ name: 'repair', arguments: { action: 'abort' } }));
     expect(text(await client.callTool({ name: 'repair', arguments: { action: 'status' } }))).toEqual({ outcome: 'none' });
+  });
+
+  /** Plan §3 M10 over the protocol: one sentence's worth of spec in, a finishable game out. */
+  it('generates a whole small RPG and commits it', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    // The guide is what a client reads first, and it names the ids that exist
+    // so the spec below doesn't have to guess at them.
+    const guide = ((await client.readResource({ uri: 'rmmz://game-brief-guide' })).contents[0] as { text: string }).text;
+    expect(guide).toContain('Enemies (for `troop.enemyId`): 1 Slime, 2 Bat');
+
+    const report = text(
+      await client.callTool({
+        name: 'generate_game',
+        arguments: {
+          title: 'The Lantern of Grey Fen',
+          seed: 3,
+          party: [1, 2],
+          areas: [
+            { key: 'fen', name: 'Grey Fen' },
+            { key: 'mire', name: 'The Mire', connects: ['fen'] },
+          ],
+          quests: [
+            {
+              key: 'lantern',
+              title: 'The Lost Lantern',
+              giver: { area: 'fen', name: 'Ferryman' },
+              objective: { kind: 'fetch', area: 'mire', name: 'Sunken Crate', item: { name: 'Brass Lantern' } },
+              reward: { gold: 80 },
+            },
+          ],
+          finale: { area: 'mire', name: 'Fen Warden', troop: { enemyId: 2, count: 2 } },
+          options: { battleTrials: 50 },
+        },
+      })
+    ) as {
+      ok: boolean;
+      summary: string;
+      scenarios: Array<{ name: string; pass: boolean; failures: string[] }>;
+      build: { startMapId: number; quests: Array<{ switches: { done: number } }> };
+      suite: unknown[];
+    };
+
+    expect(report.scenarios.map((s) => [s.name, s.failures])).toEqual([
+      ['walkthrough', []],
+      ['gates', []],
+    ]);
+    expect(report.ok).toBe(true);
+    // The trimmed report still carries the suite, because handing it to
+    // `repair` is the intended next call.
+    expect(report.suite).toHaveLength(2);
+
+    text(await client.callTool({ name: 'commit', arguments: { message: 'feat: generate The Lantern of Grey Fen' } }));
+
+    const summary = JSON.parse(
+      ((await (await connectedClient(await openProject(dir))).readResource({ uri: 'rmmz://project/summary' })).contents[0] as { text: string }).text
+    ) as { gameTitle: string; maps: Array<{ name: string }> };
+    expect(summary.gameTitle).toBe('The Lantern of Grey Fen');
+    expect(summary.maps.map((m) => m.name)).toContain('Grey Fen');
   });
 
   it('serves the project over the playtest tool and stops again', async () => {

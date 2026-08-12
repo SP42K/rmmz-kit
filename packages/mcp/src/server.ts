@@ -2,7 +2,8 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { ProjectSession } from '@rmmz-kit/core';
-import { assetCatalog, databaseResource, mapResource, projectSummary } from './resources.js';
+import { GameSpecSchema } from '@rmmz-kit/gamegen';
+import { assetCatalog, databaseResource, gameBriefGuide, mapResource, projectSummary } from './resources.js';
 import * as tools from './tools.js';
 
 /**
@@ -125,6 +126,16 @@ function registerResources(server: McpServer, session: ProjectSession): void {
     async (uri) => ({
       contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await assetCatalog(session), null, 2) }],
     })
+  );
+
+  server.registerResource(
+    'game-brief-guide',
+    'rmmz://game-brief-guide',
+    {
+      description:
+        "How to turn a one-sentence brief into a generate_game spec, and what to do with the report it returns. Read this before calling generate_game.",
+    },
+    async (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: gameBriefGuide(session) }] })
   );
 }
 
@@ -475,6 +486,30 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       },
     },
     async ({ action, ...spec }) => json(await tools.repair(session, action, spec))
+  );
+
+  server.registerTool(
+    'generate_game',
+    {
+      description:
+        'Generate a whole small RPG from a spec: one composed map per area, two-way portals between them, a quest ' +
+        'chain with switch gating, and a boss that ends the game. Then check it is finishable — validate the data, ' +
+        'simulate every generated fight, and play a generated walkthrough through to the clear switch. Writes ' +
+        'nothing to disk: commit if the report is good, rollback and change the seed if it is not. Hand the ' +
+        'returned `suite` to `repair` as its regression set if you want to fix the result by hand.',
+      inputSchema: {
+        ...GameSpecSchema.shape,
+        options: z
+          .object({
+            minWinRate: z.number().min(0).max(1).optional().describe('A generated fight below this win rate is reported as a wall (default 0.5)'),
+            battleTrials: z.number().int().min(1).max(10000).optional().describe('Trials per simulated fight (default 200)'),
+            checkBattles: z.boolean().optional().describe('Set false to skip the battle gate, which is the slow one'),
+          })
+          .strict()
+          .optional(),
+      },
+    },
+    async ({ options, ...spec }) => json(await tools.generateGame(session, spec, options))
   );
 
   server.registerTool(

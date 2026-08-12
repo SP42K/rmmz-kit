@@ -82,6 +82,77 @@ export function databaseResource(session: ProjectSession, table: string): unknow
 }
 
 /**
+ * `rmmz://game-brief-guide` (plan §3 M10) — the milestone's "prompt engineering"
+ * half, checked in as a resource rather than left in whatever prompt happened to
+ * be in front of the model. Two parts, and the second is the one that earns it:
+ *
+ * - The *method*: how a one-sentence brief becomes a spec, and what to do with
+ *   each way the report can come back unfinishable. `GameSpecSchema`'s field
+ *   descriptions already document the shape; this documents the decisions.
+ * - The *project*: the actors, enemies and items this particular game has. The
+ *   generator arranges content, it doesn't invent enemies, so a model writing
+ *   `enemyId: 3` against a project with two enemies has written a spec that
+ *   fails at the first gate. Same argument as the asset catalog (§4.5): naming
+ *   what exists is disproportionately effective against hallucinated ids.
+ */
+export function gameBriefGuide(session: ProjectSession): string {
+  const files = new Set(session.listFiles());
+  const list = (file: string, label: string): string => {
+    if (!files.has(file)) return `- ${label}: none (${file} is missing)`;
+    const rows = session
+      .readFile<Array<{ id: number; name?: string } | null>>(file)
+      .filter((row): row is { id: number; name?: string } => row != null)
+      .map((row) => `${row.id} ${row.name ?? ''}`.trim());
+    return `- ${label}: ${rows.length > 0 ? rows.join(', ') : 'none'}`;
+  };
+
+  return `# Turning a brief into a \`generate_game\` spec
+
+## Method
+
+1. **Read the sentence for its places, its people and its ending.** Areas are
+   places the player walks between; quests are what people ask for; the finale
+   is the thing that ends the game. A brief that names none of these still needs
+   all three — invent them, but keep the count small: 2-4 areas and 3-5 quests is
+   the 30-60 minutes the plan asks for.
+2. **Sequence with \`requires\`, not with geography.** The generator gates a quest
+   giver on the switches of the quests it requires. Chaining every quest to the
+   previous one gives a linear story; chaining several to one gives a hub.
+3. **Only arrange content that exists.** \`troop\`/\`item\` ids and party actors must
+   already be in the database (see below) — the exception is a fetch quest's
+   \`item\`, where passing \`{ name }\` creates the quest item for you. If you want
+   an enemy the project doesn't have, write it with \`upsert_database\` *first*,
+   then check it with \`simulate_battle\`.
+4. **Call \`generate_game\`, read the report, then commit or roll back.** Nothing
+   is on disk until you commit.
+
+## When the report says it is not finishable
+
+| What it says | What it means | What to do |
+|---|---|---|
+| \`issues\` non-empty | The spec itself is incoherent (a cycle in \`requires\`, an area nothing connects to, an id that doesn't exist). Nothing was built. | Fix the spec and call again. |
+| a battle with \`ok: false\` | The party loses that fight too often. The event layer cannot see this — it is *told* who won. | Weaken the troop (fewer members, a different enemy), strengthen the party, or raise \`options.minWinRate\` if you disagree with the threshold. |
+| \`findings\` with severity \`error\` | The generated data is structurally wrong. This is a bug in the generator, not in your spec. | Report it; the scenarios were not even run. |
+| a scenario with \`pass: false\` | The game does not play through. \`failures\` names the check, expected and actual. | Hand \`suite\` to \`repair\` (action \`start\`), fix with \`apply_script\`/\`upsert_map_event\`, then \`check\`. |
+
+## What this project has
+
+${list('Actors.json', 'Actors (for `party`)')}
+${list('Enemies.json', 'Enemies (for `troop.enemyId`)')}
+${list('Troops.json', 'Troops (for a numeric `troop`)')}
+${list('Items.json', 'Items (for `reward.itemId` and a numeric fetch `item`)')}
+
+## What it does not do
+
+Decoration, art and music: every generated event is invisible (no character
+sprite) because this repo ships no tileset or character art to point at. Give an
+event a sprite with \`upsert_map_event\` afterwards, or import one with
+\`import_asset\` first. Balance beyond "is the fight winnable" is
+\`simulate_battle\`'s question, not this one's.
+`;
+}
+
+/**
  * Filenames (extension stripped) present under each standard asset folder
  * (ASSET_DIRS, shared with import_asset). Grounding an LLM in what actually
  * exists — plan §4.5's point that this is disproportionately effective at
