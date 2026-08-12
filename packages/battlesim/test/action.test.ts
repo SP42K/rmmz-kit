@@ -81,8 +81,17 @@ describe('battler', () => {
     for (let turn = 0; turn < 5; turn++) warrior.onTurnEnd(rng);
     expect(warrior.isStateAffected(2)).toBe(false);
 
+    // Slip damage clamps at 1 HP (Slip Death off is the editor default).
+    warrior.gainHp(warrior.mhp, rng);
+    warrior.addState(2, rng);
+    warrior.gainHp(-(warrior.hp - 20), rng);
+    warrior.onTurnEnd(rng);
+    expect(warrior.hp).toBe(1);
+
     warrior.gainHp(-warrior.hp, rng);
     expect(warrior.isDead()).toBe(true);
+    warrior.removeState(1);
+    expect(warrior.hp).toBe(1); // Game_BattlerBase.revive()
   });
 });
 
@@ -109,6 +118,28 @@ describe('damage', () => {
     const broken = enemyBattler(db, 1);
     expect(applyAction(formula, rng, warrior, testSkill({ damage: { formula: 'b.nope(' } }), broken).damage).toBe(0);
     expect(applyAction(formula, rng, warrior, testSkill({ damage: { formula: 'process.exit(1)' } }), broken).damage).toBe(0);
+    // Sandbox escapes via host-object graph traversal must fail too — if one
+    // works, the process exits and this whole test file dies loudly.
+    expect(
+      applyAction(formula, rng, warrior, testSkill({ damage: { formula: "a.constructor.constructor('return process')().exit(1)" } }), broken).damage
+    ).toBe(0);
+    expect(
+      applyAction(formula, rng, warrior, testSkill({ damage: { formula: "Math.floor.constructor('return process')().exit(1)" } }), broken).damage
+    ).toBe(0);
+  });
+
+  it('drain (type 5) clamps to the target\'s HP and heals the attacker', () => {
+    const rng = new Rng(5);
+    const formula = new FormulaEvaluator(rng);
+    const warrior = actorBattler(db, { actorId: 1, level: 1, equips: [1, 1, 0, 0, 0] });
+    warrior.gainHp(-300, rng); // 450 -> 150
+    const slime = enemyBattler(db, 1);
+    slime.gainHp(-(slime.hp - 10), rng); // leave 10 HP
+
+    const hit = applyAction(formula, rng, warrior, testSkill({ damage: { type: 5, formula: '70' } }), slime);
+    expect(hit.damage).toBe(10); // clamped to what the slime had left
+    expect(slime.isDead()).toBe(true);
+    expect(warrior.hp).toBe(160); // 150 + the 10 actually drained
   });
 
   it('keeps variance inside MZ\'s +/-N% band and actually varies', () => {

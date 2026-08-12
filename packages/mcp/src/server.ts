@@ -178,7 +178,7 @@ function registerTools(server: McpServer, session: ProjectSession): void {
         troopId: z.number().int().optional(),
         enemies: z.array(z.number().int()).optional().describe('Enemy ids, as an alternative to troopId'),
         trials: z.number().int().min(1).max(10000).optional(),
-        maxTurns: z.number().int().min(1).optional(),
+        maxTurns: z.number().int().min(1).max(1000).optional(),
         seed: z.number().int().optional(),
       },
     },

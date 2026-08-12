@@ -157,7 +157,10 @@ function runBattle(
     const queue = actors.map((subject) => {
       const allies = party.includes(subject) ? party : enemies;
       const foes = allies === party ? enemies : party;
-      const skill = chooseSkill(db, rng, subject, allies, turn);
+      // `turn - 1`: MZ picks actions during startInput, *before* startTurn's
+      // increaseTurn, so turn conditions see turnCount() = 0 on the first
+      // round — that is why the editor's "Turn 0" means "opening move".
+      const skill = chooseSkill(db, rng, subject, allies, foes, turn - 1);
       // MZ's `isGuard()` reads the *pending* action, so guarding is in effect
       // for the whole turn — including against battlers that act first.
       subject.guarding = skill?.id === GUARD_SKILL_ID;
@@ -169,15 +172,19 @@ function runBattle(
       const { subject, allies, foes, skill } = turnAction;
       if (subject.isDead() || !skill || !subject.canMove()) continue;
 
-      subject.gainMp(-skill.mpCost); // Game_Battler.paySkillCost — no TP, see battler.ts
       const forced = forcedTarget(rng, subject, allies, foes);
-      const targets = forced ?? resolveTargets(rng, skill, subject, allies, foes);
-      const repeats = Math.max(1, skill.repeats);
+      // Restrictions 1-3 replace the whole action with a cost-free plain
+      // Attack (Game_Action.prepare -> setConfusion -> setAttack) — a
+      // confused healer swings at someone, it does not misfire its Heal.
+      const used = forced ? db.skills[ATTACK_SKILL_ID] ?? skill : skill;
+      subject.gainMp(-used.mpCost); // Game_Battler.paySkillCost — no TP, see battler.ts
+      const targets = forced ?? resolveTargets(rng, used, subject, allies, foes);
+      const repeats = Math.max(1, used.repeats);
       for (let i = 0; i < repeats; i++) {
         for (const target of targets) {
-          if (target.isDead() && skill.scope !== 9 && skill.scope !== 10) continue;
+          if (target.isDead() && used.scope !== 9 && used.scope !== 10) continue;
           const fullHp = target.hp === target.mhp;
-          const hit = applyAction(formula, rng, subject, skill, target);
+          const hit = applyAction(formula, rng, subject, used, target);
           record(result, party.includes(subject), hit);
           if (fullHp && target.isDead() && hit.damage > 0) result.oneShotKill = true;
         }
@@ -191,10 +198,8 @@ function runBattle(
       }
     }
 
+    // Turn end can't end the battle: slip damage clamps at 1 HP (battler.ts).
     for (const battler of [...party, ...enemies]) battler.onTurnEnd(rng);
-    // Slip damage can end the battle too (poison finishing a 1 HP actor).
-    if (enemies.every((enemy) => enemy.isDead())) return { ...result, outcome: 'win', turns: turn };
-    if (party.every((member) => member.isDead())) return { ...result, outcome: 'defeat', turns: turn };
   }
 
   return result;
@@ -236,10 +241,17 @@ function forcedTarget(rng: Rng, subject: Battler, allies: Battler[], foes: Battl
 
 const alive = (battlers: Battler[]) => battlers.filter((battler) => battler.isAlive());
 
-function chooseSkill(db: Database, rng: Rng, subject: Battler, allies: Battler[], turn: number): Skill | null {
+function chooseSkill(
+  db: Database,
+  rng: Rng,
+  subject: Battler,
+  allies: Battler[],
+  foes: Battler[],
+  turn: number
+): Skill | null {
   return subject.isActor
     ? chooseActorSkill(db, subject, allies)
-    : chooseEnemySkill(db, rng, subject, turn);
+    : chooseEnemySkill(db, rng, subject, foes, turn);
 }
 
 /**
@@ -266,10 +278,10 @@ function chooseActorSkill(db: Database, subject: Battler, allies: Battler[]): Sk
 }
 
 /** `Game_Enemy.selectAllActions()`: everything within 3 rating points of the best, weighted by rating. */
-function chooseEnemySkill(db: Database, rng: Rng, subject: Battler, turn: number): Skill | null {
+function chooseEnemySkill(db: Database, rng: Rng, subject: Battler, foes: Battler[], turn: number): Skill | null {
   const valid = subject.actions.filter((action) => {
     const skill = db.skills[action.skillId];
-    return skill != null && skill.mpCost <= subject.mp && meetsCondition(action, subject, turn);
+    return skill != null && skill.mpCost <= subject.mp && meetsCondition(action, subject, foes, turn);
   });
   if (valid.length === 0) return db.skills[ATTACK_SKILL_ID] ?? null;
 
@@ -290,7 +302,7 @@ function chooseEnemySkill(db: Database, rng: Rng, subject: Battler, turn: number
  * `$gameSwitches`, and "this enemy never uses its scripted move" would be the
  * more misleading of the two answers.
  */
-function meetsCondition(action: EnemyAction, subject: Battler, turn: number): boolean {
+function meetsCondition(action: EnemyAction, subject: Battler, foes: Battler[], turn: number): boolean {
   const { conditionParam1: p1, conditionParam2: p2 } = action;
   switch (action.conditionType) {
     case 1:
@@ -301,6 +313,9 @@ function meetsCondition(action: EnemyAction, subject: Battler, turn: number): bo
       return subject.mpRate >= p1 && subject.mpRate <= p2;
     case 4:
       return subject.isStateAffected(p1);
+    case 5:
+      // Game_Enemy.meetsPartyLevelCondition: $gameParty.highestLevel() >= p1.
+      return Math.max(...foes.map((foe) => foe.level)) >= p1;
     default:
       return true;
   }
@@ -345,8 +360,12 @@ function resolveTargets(rng: Rng, skill: Skill, subject: Battler, allies: Battle
       return allies.filter((ally) => ally.isDead());
     case 11:
       return [subject];
-    case 12:
-      return [subject];
+    case 12: {
+      // "1 Ally (Unconditional)": like scope 7 but the dead stay in the pool
+      // (this is MZ 1.1+'s revive-capable single-target scope).
+      const heals = skill.damage.type === 3 || skill.effects.some((e) => e.code === 11);
+      return heals ? [allies.reduce((worst, ally) => (ally.hpRate < worst.hpRate ? ally : worst))] : [subject];
+    }
     case 13:
       return allies;
     case 14:

@@ -210,7 +210,10 @@ Three files, in the order data flows through them:
   reordering variance and guard alone moves mean damage several percent, which is most of the
   acceptance criterion's 10% budget. Formulas run through `node:vm` with only `{a, b, v, Math}`
   in scope — the string comes from a data file an agent may have just written, and MZ's own
-  "any failure evaluates to 0" contract is kept.
+  "any failure evaluates to 0" contract is kept. No host object crosses into that context
+  (`a`/`b` are null-prototype number bags, `Math.random`/`v` are installed by a script compiled
+  *inside* it), because one reachable host function is `x.constructor.constructor` away from
+  the host realm.
 - `simulate.ts` — the turn loop (turn-based, never TPB), the trial runner and the aggregation.
 
 `battler.ts` and `action.ts` each carry an explicit list of what is *not* modeled (buffs/debuffs,

@@ -43,26 +43,37 @@ const noHit = (evaded: boolean): HitResult => ({
  * `v`. `node:vm` gives the same thing without letting a project's formula
  * reach this process's scope — the formula string comes out of a data file an
  * agent may have just written, so it is not trusted input.
+ *
+ * Isolation depends on the context holding no host-realm object at all: any
+ * host function or prototype handed in lets `x.constructor.constructor(...)`
+ * reach the host `Function` and escape. So the contextified sandbox keeps its
+ * own intrinsics (a vm context gets a fresh `Math` of its own), the seeded
+ * `Math.random` and the `v` proxy are installed by a function compiled
+ * *inside* the context (a closure over a host callback is not reachable by
+ * reflection), and `a`/`b` are null-prototype snapshots of plain numbers.
  */
 export class FormulaEvaluator {
-  private readonly scope: { a: Battler | null; b: Battler | null; Math: typeof Math; v: number[] };
+  private readonly sandbox: { a?: object; b?: object };
   private readonly context: vm.Context;
   private readonly scripts = new Map<string, vm.Script | null>();
 
   constructor(rng: Rng, variables: number[] = []) {
-    // `Math` with a seeded `random`, so a formula that rolls its own dice
-    // (`a.atk * (1 + Math.random())`) stays reproducible along with the rest.
-    const math: typeof Math = Object.create(Math);
-    math.random = () => rng.next();
-    this.scope = {
-      Math: math,
-      a: null,
-      b: null,
-      // No game state exists here, so `v[n]` reads as whatever the caller
-      // passed and 0 otherwise, rather than NaN-ing the whole formula.
-      v: new Proxy(variables, { get: (target, key) => Reflect.get(target, key) ?? 0 }),
-    };
-    this.context = vm.createContext(this.scope);
+    this.sandbox = Object.create(null) as { a?: object; b?: object };
+    this.context = vm.createContext(this.sandbox);
+    // `Math.random` is seeded so a formula that rolls its own dice
+    // (`a.atk * (1 + Math.random())`) stays reproducible along with the rest;
+    // `v[n]` reads as whatever the caller passed and 0 otherwise, rather than
+    // NaN-ing the whole formula.
+    const install = new vm.Script(
+      '(rand, getVar) => { Math.random = () => rand(); globalThis.v = new Proxy({}, { get: (_t, key) => getVar(key) }); }'
+    ).runInContext(this.context) as (
+      rand: () => number,
+      getVar: (key: string | symbol) => number
+    ) => void;
+    install(
+      () => rng.next(),
+      (key) => (typeof key === 'string' ? variables[Number(key)] ?? 0 : 0)
+    );
   }
 
   /** `Game_Action.evalDamageFormula()`, including its "any failure is 0 damage" contract. */
@@ -78,8 +89,8 @@ export class FormulaEvaluator {
     }
     if (script === null) return 0;
 
-    this.scope.a = a;
-    this.scope.b = b;
+    this.sandbox.a = formulaView(a);
+    this.sandbox.b = formulaView(b);
     try {
       const value = Math.max(script.runInContext(this.context, { timeout: 1000 }), 0) * sign;
       return isNaN(value) ? 0 : value;
@@ -87,6 +98,27 @@ export class FormulaEvaluator {
       return 0;
     }
   }
+}
+
+/**
+ * The battler surface a damage formula sees (`a.atk`, `b.def`, `a.level`,
+ * `a.hp`...), copied into a null-prototype bag of numbers so no live host
+ * object ever crosses into the vm context (see FormulaEvaluator's doc).
+ */
+function formulaView(battler: Battler): object {
+  return Object.assign(Object.create(null), {
+    level: battler.level,
+    hp: battler.hp,
+    mp: battler.mp,
+    mhp: battler.mhp,
+    mmp: battler.mmp,
+    atk: battler.atk,
+    def: battler.def,
+    mat: battler.mat,
+    mdf: battler.mdf,
+    agi: battler.agi,
+    luk: battler.luk,
+  });
 }
 
 const isPhysical = (skill: Skill) => skill.hitType === 1;
@@ -113,12 +145,20 @@ export function applyAction(
 
   let damage = 0;
   if (skill.damage.type > 0) {
-    const value = makeDamageValue(formula, rng, subject, skill, target, critical);
+    let value = makeDamageValue(formula, rng, subject, skill, target, critical);
     if (isHpEffect(skill)) {
+      // Game_Action.executeHpDamage: a drain (type 5) can't take more than
+      // the target has, and what it takes comes back to the subject.
+      if (skill.damage.type === 5) value = Math.min(target.hp, value);
       target.gainHp(-value, rng);
+      if (skill.damage.type === 5) subject.gainHp(value, rng);
       damage = value;
     } else {
+      // Game_Action.executeMpDamage clamps all non-recover MP damage to what
+      // the target has; a drain (type 6) credits the subject.
+      if (skill.damage.type !== 4) value = Math.min(target.mp, value);
       target.gainMp(-value);
+      if (skill.damage.type === 6) subject.gainMp(value);
     }
   }
 

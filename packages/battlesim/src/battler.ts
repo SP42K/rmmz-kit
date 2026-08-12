@@ -148,7 +148,11 @@ export class Battler {
    * up for a battler whose base+equip params reach four digits.
    */
   param(paramId: number): number {
-    const value = Math.max(0, this.base[paramId] + this.plus[paramId]) * this.traitsPi(TRAIT_PARAM, paramId);
+    // `?? 0`: a row upserted with a short/missing params array reads as 0
+    // (and so hits paramMin below), not NaN — NaN hp never reaches 0, which
+    // silently turns every trial into a stalemate.
+    const value =
+      Math.max(0, (this.base[paramId] ?? 0) + (this.plus[paramId] ?? 0)) * this.traitsPi(TRAIT_PARAM, paramId);
     return Math.round(Math.max(value, paramId === 1 ? 0 : 1));
   }
 
@@ -238,7 +242,9 @@ export class Battler {
   }
 
   removeState(stateId: number): void {
-    this.states.delete(stateId);
+    if (this.states.delete(stateId) && stateId === DEATH_STATE_ID && this.hp === 0) {
+      this.hp = 1; // Game_BattlerBase.revive() — an effect-22 revive must not leave a 0-HP "alive" battler
+    }
   }
 
   gainHp(value: number, rng: Rng): void {
@@ -264,7 +270,14 @@ export class Battler {
    */
   onTurnEnd(rng: Rng): void {
     if (this.isDead()) return;
-    if (this.hrg !== 0) this.gainHp(Math.floor(this.mhp * this.hrg), rng);
+    if (this.hrg !== 0) {
+      // Game_Battler.regenerateHp clamps slip damage to -maxSlipDamage(),
+      // which with the Slip Death option off (the editor default) is hp-1:
+      // poison wears a battler down to 1 HP but never kills. System.json
+      // isn't read here, so optSlipDeath=true projects diverge (plan §6 R1).
+      const value = Math.max(Math.floor(this.mhp * this.hrg), -Math.max(this.hp - 1, 0));
+      this.gainHp(value, rng);
+    }
     if (this.mrg !== 0) this.gainMp(Math.floor(this.mmp * this.mrg));
     for (const [stateId, turns] of [...this.states]) {
       if (!Number.isFinite(turns)) continue;
@@ -308,7 +321,7 @@ export function actorBattler(db: Database, spec: PartyMemberSpec): Battler {
     for (let paramId = 0; paramId < PARAM_COUNT; paramId++) plus[paramId] += equip.params[paramId] ?? 0;
   }
 
-  const learned = klass.learnings.filter((l) => l.level <= level).map((l) => l.skillId);
+  const learned = (klass.learnings ?? []).filter((l) => l.level <= level).map((l) => l.skillId);
   const skills = spec.skills ?? [ATTACK_SKILL_ID, ...learned];
 
   return new Battler(actor.name, true, level, db, [actor, klass, ...equips], base, plus, skills);
@@ -323,9 +336,11 @@ export function enemyBattler(db: Database, enemyId: number): Battler {
     0,
     db,
     [enemy],
-    enemy.params.slice(0, PARAM_COUNT),
+    // `?? []`: upsert_database does no field validation, so a hand-upserted
+    // row can lack these — better a 1-in-every-stat weakling than a TypeError.
+    (enemy.params ?? []).slice(0, PARAM_COUNT),
     new Array(PARAM_COUNT).fill(0),
     [ATTACK_SKILL_ID],
-    enemy.actions
+    enemy.actions ?? []
   );
 }
