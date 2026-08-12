@@ -170,7 +170,10 @@ export function analyzeReachability(session: ProjectSession, mapId: number): Rea
     }
   }
 
-  const largest = regionSizes.indexOf(Math.max(0, ...regionSizes));
+  // NaN when nothing is walkable at all: unvisited cells hold -1, so any
+  // "no region" sentinel that is a real number would match every cell and
+  // report every event as reachable on a map the player cannot enter.
+  const largest = regionSizes.length === 0 ? NaN : regionSizes.indexOf(Math.max(...regionSizes));
   const unreachableEvents: number[] = [];
   for (const event of map.events) {
     if (!event) continue;

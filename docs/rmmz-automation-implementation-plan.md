@@ -320,7 +320,7 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 |---|---|---|---|
 | 1 | ~~`tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆~~ | 中 | **M7 已修**：`tables.ts` 的 `NEW_ROW_DEFAULTS` 只在「這個 id 還沒有列」時補上 `flags` / `tilesetNames` / `mode`，不碰既有列。清單刻意保持接近空的——per-table schema 仍是 §4.5 說不要提前做的建模，要進這張表得先講得出它擋掉哪一種 crash |
 | 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事 |
-| 3 | `upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入 | 中 | 先修的一版（複製 `[...data]` 再寫回）會壞掉 `allocEntityId`——它讀的是 session 的即時陣列，多筆連續 append 靠這個拿到遞增 id。需要 allocator 與 updateFile 一起處理，歸到與 #2 同一批 |
+| 3 | ~~`upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入~~ | 中 | **已於 M7 修掉**：`updateFile` 改成先 `dirty.add()` 再跑 updater。這比當初設想的「複製 `[...data]` 再寫回」小得多，也不動 `allocEntityId` 讀 session 即時陣列的行為；代價只是 updater 尚未 mutate 就 throw 時多寫一次位元組相同的檔案 |
 
 ---
 
@@ -367,6 +367,17 @@ autotile shape 編號沒有 spec，實作方式是**從 MZ 自己的 `Tilemap.FL
 | 裝飾規則 ・「看起來像人做的」≥ 70% | 同上，要有真 tileset 的 B–E 圖塊可放；且這是評分不是演算法 | 同上 |
 | validator 的「所有事件可達」規則 | `analyzeReachability()` 已在 `mapgen` 匯出、`compose_map` 也用它斷言，但套到手作地圖上會對正常東西發警告（停在 0,0 的並列處理事件、放在不可通行格上的裝飾事件），會叫的 validator 沒人理 | 有真實專案的誤報率數據再說 |
 | autotile 越界鄰居的處理 | 目前 clamp（視為邊緣格延伸，所以畫到地圖邊緣不生接縫），這是 R1/R9 級假設，全部集中在 `tileAt` 的一個 clamp | 對照編輯器實際輸出後一行可改 |
+
+**已知缺口（實作後 code review 找出，刻意不在 M7 修）**：五項 finding 中三項已在本里程碑修掉
+（`paintMapData` 改成全部 op 驗完再畫；`updateFile` 改成先標 dirty 再跑 updater——這順帶關掉
+上面 M6.5 缺口 #3，且避開了那條註記說會壞掉 `allocEntityId` 的「複製再寫回」修法；
+`analyzeReachability` 的「無區域」哨兵改用 `NaN`，原本的 `-1` 與未走訪格同值，整張地圖不可進入
+時反而回報所有事件都可達）。剩兩項：
+
+| # | 缺口 | 代價 | 排程 |
+|---|---|---|---|
+| 1 | `composeMap` 的連通性 throw 發生在 `createMap` 已寫入 `Map###.json` ＋ MapInfos 列、`ensureFlags` 已改掉 97 筆 tileset flag *之後*；這些改動留在 session 裡，呼叫端若沒整批 rollback 就會 commit 出一張不連通的地圖。觸發路徑：`setFlags: false` 配上一套沒把地板設成可通行的 tileset | 低（要非預設參數才踩得到；且 throw 本身有講清楚） | 需要把 `analyzeReachability` 改成能吃脫離 session 的 `MapData`（現在它從 session 讀 map 與 tileset），才能在建檔前先驗。等哪天有第二個呼叫端需要「先驗再落地」時一起做 |
+| 2 | `resizeMap` 事後重算 shape 是掃**整張**地圖的 layer 0–1，不是只掃放大後新暴露的邊帶：會蓋掉呼叫端刻意用 `autotile: false` 寫的 tile，也會在本模組 R9 推導與 MZ 實際輸出不一致處重畫編輯器做的地圖 | 低 | 目前這個全圖 pass 是刻意的（縮小也可能讓內部格變成邊緣格）。等上面 autotile clamp 那條對照過真實編輯器輸出、確認推導無誤後，再決定要不要縮成邊帶 |
 
 ---
 

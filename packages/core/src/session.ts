@@ -110,9 +110,14 @@ export class ProjectSession {
   /** Mutate a file's in-memory data. Return a replacement, or mutate in place and return nothing. */
   updateFile<T = unknown>(name: string, updater: (data: T) => T | void): void {
     const current = this.readFile<T>(name);
+    // Marked dirty *before* the updater runs, not after: an updater that mutates
+    // in place and then throws (a multi-entry write that rejects entry N) has
+    // already changed `current`, which is the object in `files`. Marking after
+    // would leave that change untracked — invisible to rollback(), and silently
+    // committed by the next unrelated edit to the same file.
+    this.dirty.add(name);
     const result = updater(current);
     this.files.set(name, result === undefined ? current : result);
-    this.dirty.add(name);
   }
 
   async validate(): Promise<ValidationReport> {

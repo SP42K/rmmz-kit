@@ -134,7 +134,10 @@ export function paintMapData(map: MapData, ops: PaintOp[], layer: number, autoti
     throw new Error(`Layer must be an integer in 0..${LAYERS - 1}, got ${JSON.stringify(layer)}`);
   }
 
-  for (const op of ops) {
+  // Validate every op before writing any (same reason as setTileFlags): `map` is
+  // mutated in place, so throwing on op N would leave ops 0..N-1 painted into a
+  // map the caller was told the paint failed on.
+  const rects = ops.map((op) => {
     const width = op.width ?? 1;
     const height = op.height ?? 1;
     if (!Number.isInteger(op.tileId) || op.tileId < 0 || op.tileId >= TILE_ID_MAX) {
@@ -157,6 +160,11 @@ export function paintMapData(map: MapData, ops: PaintOp[], layer: number, autoti
         `Paint rect ${op.x},${op.y} ${width}x${height} is outside the ${map.width}x${map.height} map`
       );
     }
+    return { ...op, width, height };
+  });
+
+  for (const op of rects) {
+    const { width, height } = op;
 
     for (let y = op.y; y < op.y + height; y++) {
       for (let x = op.x; x < op.x + width; x++) {
