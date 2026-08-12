@@ -29,8 +29,10 @@ primitives, BSP composition — see below). M7.5 done (L2 Tier 2: the remaining
 sit on — see below). M8 / L5 done **as the plan's own R2 fallback**
 (`packages/playtest`: playtest server, headless *event-layer* runtime and
 scenario assertions, `AutoTest.js` — the browser half cannot be closed from
-inside this repo, see below). L2 Tier 3 and everything from M9 onward not
-started.
+inside this repo, see below). M9 / L6 done (`packages/agent`: the repair loop as
+a state machine the MCP client drives, plus the 20-bug corpus its acceptance
+names — the *repair rate* needs a model this process doesn't have, see below).
+L2 Tier 3 and everything from M10 onward not started.
 
 ## Commands
 
@@ -44,6 +46,7 @@ npx tsc -p packages/validate/tsconfig.json --noEmit
 npx tsc -p packages/battlesim/tsconfig.json --noEmit
 npx tsc -p packages/mapgen/tsconfig.json --noEmit
 npx tsc -p packages/playtest/tsconfig.json --noEmit
+npx tsc -p packages/agent/tsconfig.json --noEmit
 npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
@@ -227,11 +230,11 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 19 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
+plus 20 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
 `create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`, `manage_plugins`,
 `import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`, `run_scenario`,
-`diff`, `commit`, `rollback`). §4.5's `coverage()` is *not* a twentieth: coverage with no scenario
-behind it is a table of zeroes, so it rides in `run_scenario`'s report instead. `simulate_battle`
+`repair`, `diff`, `commit`, `rollback`). §4.5's `coverage()` is *not* a twenty-first: coverage with
+no scenario behind it is a table of zeroes, so it rides in `run_scenario`'s report instead. `simulate_battle`
 and `run_scenario` both run against the *in-memory* session, so an agent can ask "did that buff
 break the boss fight?" or "does the quest still complete?" about an edit it has not committed —
 `playtest` is the exception and serves what is on disk, because a browser reads files, not memory.
@@ -467,6 +470,59 @@ Playwright at the URL and call `window.__AT` over `page.evaluate`. The assertion
 report shape are already the ones `run_scenario` uses, so what is missing is the transport, not the
 test model. Nothing in this package should need to change — which is why this is written here
 rather than left as a TODO in code.
+
+### L6 repair loop (`packages/agent`)
+
+**The generator is not in this package, and cannot be.** Plan §3 M9's pipeline is
+`plan → generate(DSL) → compile → validate → …`, and the thing that turns feedback back into a
+DSL is an LLM — which in this architecture *is the MCP client*. So the loop is written as a state
+machine the client drives (`RepairLoop.start()` / `.check()`, exposed as the `repair` tool), with
+`runRepairLoop(session, spec, generate)` as the callback-shaped convenience for programmatic
+callers and tests. `start()` snapshots what is already failing so a generator writes its first
+draft against reality; each `check()` grades whatever is in the session as one attempt and returns
+either the feedback to act on or a verdict (`converged` / `exhausted` / `oscillating`).
+
+Two files. `loop.ts` is the state machine and the plan's 必要配套; `feedback.ts` is the part §3 M9
+names as the determining variable for repair rate (「錯誤訊息品質是修復率的決定變數，投資在這裡比
+投資在 prompt 上划算」) and is the only place in the package where formatting detail is the point.
+What it adds over dumping `Finding[]` + `ScenarioReport[]`, each of which costs an attempt when
+missing: the **edit address** (a finding's `path` is `event 3 > page 1 > …`, but the agent edits
+through `apply_script`, which takes map/event/page), the **trajectory** (which distinguishes "the
+switch was never set" from "the event never ran", two causes with opposite fixes), and the **state
+diff against the previous attempt** — including the single most useful line in the report, *your
+last edit changed nothing this scenario reads*, which is the signal that comes one attempt before
+oscillation.
+
+Three deviations from the plan's sketch, all forced by this repo's own architecture:
+
+- **No "commit to a temp branch, then playtest".** `run_scenario` runs against the *in-memory*
+  session (M8's decision), so the dynamic gate needs no commit. The loop commits exactly once, on
+  convergence — which is also why there is **no `git reset` on failure**: a failed attempt never
+  wrote anything. It deliberately does not call `session.rollback()` either, because that drops
+  *every* in-memory change since the last commit, including edits made before the loop started.
+- **Branch isolation is optional** (`spec.branch`), not mandatory. R4's "oscillation ruins the
+  project" is already answered by committing only on convergence; the branch is for keeping a
+  converged-but-unreviewed result off the main line, a different concern.
+- **Pre-existing findings are excused.** `start()` snapshots the validator's output and only *new*
+  blocking findings fail an attempt. A real project always carries some lint noise (the fixture's
+  own EV001 is structurally broken), and a loop that blames the generator for it spends all three
+  attempts on someone else's bug. Scenario failures get no such amnesty — the suite *is* the spec.
+
+Oscillation detection is one `Map<signature, attempt>`: if this attempt's failure set was already
+seen, the loop stops and escalates. That covers A/B/A alternation and the stuck-in-place case with
+one rule, which is why it isn't the "same test flips between A and B" matcher the plan describes.
+The signature includes each finding's *message*, because one rule firing on two different ids is
+two different bugs and collapsing them would report a converging loop as oscillating.
+
+**Acceptance, honestly split** — the same shape as M6 and M8. The 20 injected bugs are built and
+checked in (`test/bugs.test.ts`: 10 static, one per error-severity rule the validator has; 10
+dynamic, each breaking M8's herb quest a different way, including the runaway-loop softlock). Every
+one is invisible to `tsc` and to `ProjectSession.validate()`, every one is caught, and the test
+asserts the feedback names the *cause* in the agent's own vocabulary — not that "something failed".
+The **repair rate** (「≥ 靜態 8/10、動態 4/10」) is *not* measured, because repairing means
+regenerating and there is no model in this test process; wiring one in would measure that model on
+that day, not this package. To close it: point `runRepairLoop`'s `generate` at a real model, run the
+same table, count. Nothing in `src/` needs to change.
 
 ### Legacy JS carried over
 

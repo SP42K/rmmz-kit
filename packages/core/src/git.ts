@@ -45,6 +45,16 @@ export class GitRepo {
     return (await this.run(['rev-parse', 'HEAD'])).trim();
   }
 
+  /** Current branch name, or 'HEAD' when detached. Returns 'HEAD' on an unborn branch too. */
+  async currentBranch(): Promise<string> {
+    return (await this.run(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+  }
+
+  /** Create a branch at HEAD and switch to it, carrying the working tree over (M9's optional repair-branch isolation). */
+  async checkoutNew(name: string): Promise<void> {
+    await this.run(['checkout', '-b', name]);
+  }
+
   /** True if there are no staged/unstaged changes and nothing untracked under `paths`. */
   async isClean(paths: string[] = []): Promise<boolean> {
     const output = await this.run(['status', '--porcelain', '--', ...paths]);

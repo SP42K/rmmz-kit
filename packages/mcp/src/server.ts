@@ -451,6 +451,26 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   );
 
   server.registerTool(
+    'repair',
+    {
+      description:
+        'L6 repair loop: "start" snapshots what is already failing and takes the regression suite, then you edit with the other tools and call "check" to have the attempt graded. Each check returns either the feedback to act on, or a verdict (converged/exhausted/oscillating). Commits only on convergence; a failed attempt writes nothing.',
+      inputSchema: {
+        action: z.enum(['start', 'check', 'status', 'abort']).optional().describe('Defaults to check'),
+        scenarios: z
+          .array(z.object({ name: z.string().optional(), steps: z.array(scenarioStep).min(1), choices: z.array(z.number().int()).optional(), battles: z.array(z.enum(['win', 'escape', 'lose'])).optional(), maxCommands: z.number().int().min(1).optional(), newGame: z.boolean().optional() }))
+          .optional()
+          .describe('The regression suite (start only). Every attempt runs all of it, not just the one that failed'),
+        maxAttempts: z.number().int().min(1).max(10).optional().describe('Repair attempts before giving up (default 3)'),
+        blockOn: z.enum(['error', 'warning', 'info']).optional().describe('Validator severity that blocks an attempt (default error)'),
+        branch: z.string().optional().describe('Create and switch to this git branch before the convergence commit'),
+        commitMessage: z.string().optional(),
+      },
+    },
+    async ({ action, ...spec }) => json(await tools.repair(session, action, spec))
+  );
+
+  server.registerTool(
     'diff',
     { description: 'List data files that would be written by commit() right now.' },
     async () => json({ files: tools.diff(session) })
