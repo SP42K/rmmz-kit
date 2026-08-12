@@ -1,6 +1,6 @@
 # RPG Maker MZ 自動化工具鏈 — Implementation Plan
 
-版本 0.1 ・ 2026-08-11
+版本 0.2 ・ 2026-08-12（0.1 的目標是「補充編輯器」；0.2 修訂為「最大程度取代編輯器」，見 §0）
 
 > 進度現況見 `CLAUDE.md`（single source of truth），本文件不重複維護 status。
 
@@ -45,12 +45,40 @@
 
 Lv10 見 §7。
 
+### 目標（0.2 修訂）
+
+v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在編輯器裡潤飾）。0.2 起翻轉：
+**agent 經 MCP 最大程度取代編輯器** — 人只下需求，agent 經 L3 工具層完成資料庫、地圖、
+事件、插件、素材、測試遊玩與部署的全部編輯，人只在下方非目標處介入。缺口與排程見
+「編輯器對等能力對照表」與 §3。
+
 ### 非目標（明確排除）
 
 - 生成 Effekseer 動畫（`.efkefc` 二進位，不可行，一律重用內建 120 個）
-- 生成美術與音樂素材（授權與風格一致性問題，見 §7）
+- 生成美術與音樂素材、角色產生器（授權與風格一致性問題，見 §7）
 - 支援 RPG Maker MV（資料格式相近但插件指令格式不同，會拖慢 L2）
-- 取代 MZ 編輯器（本工具鏈是**補充**，人類仍在編輯器裡做最終潤飾）
+- 人用 GUI / 視覺化編輯介面（取代形態是 agent 經 MCP，不是給人另做一個編輯器）
+
+### 編輯器對等能力對照表
+
+「取代編輯器」的對齊軸，與 Lv1–Lv9（自動化等級）並列、不互相取代。
+
+| 編輯器功能 | 對應層 / 工具 | 現況 | 排入 |
+|---|---|---|---|
+| 資料庫：flat 表（Actors…Troops、CommonEvents） | `upsert_database`（10 表） | ✓ | M5 已交付 |
+| 資料庫：System（標題/初始隊伍/用語/戰鬥系統） | `update_system`（object merge，非列模型） | ✗ | M6.5 |
+| 資料庫：Tilesets / Animations / MapInfos | `upsert_database` 加表 | ✗ | M6.5 |
+| 地圖生命週期（新建/刪除/改尺寸、地圖樹） | L0 create-file + `create_map`/`resize_map` | ✗（L0 不能新建檔案） | M7 |
+| 地圖繪製（tile / autotile / 通行度） | `paint_tiles` 原語 + L3.5 拼接 | ✗ | M7 |
+| 事件：Tier 1 命令 | `apply_script`（L2 編譯器） | ✓ | M3/M5 已交付 |
+| 事件：Tier 2（357 插件指令、商店、戰鬥、移動路線…） | L2 Tier 2 + `PageSpec.moveRoute` | ✗ | M7.5 |
+| 插件管理（js/plugins.js） | `manage_plugins` | ✗ | M7.6 |
+| 素材：清單 | `rmmz://asset-catalog` | ✓ | M5 已交付 |
+| 素材：匯入 | `import_asset` | ✗ | M7.6 |
+| 測試遊玩（起遊戲給人玩） | `playtest`（http server + 瀏覽器） | ✗ | M8 前段 |
+| headless 測試 / 斷言 | M8 harness | ✗ | M8 |
+| 部署匯出（web / Windows、未用素材剔除） | `deploy` | ✗ | M11 |
+| 新建專案 | `create_project`（fixture 為模板） | ✗ | M11 |
 
 ---
 
@@ -271,22 +299,71 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 
 ---
 
-### M7 — L3.5 地圖合成 ・ 3 週
+### M6.5 — 資料庫完備 ・ 0.5 週
 
-- **autotile shape bits 計算**（tileId ≥ 2048 那組）— 這是確定性演算法，做對就是 100%
+編輯器對等（§0 對照表）最便宜的一格，無前置依賴：
+
+- `packages/mcp/src/tables.ts` 加 `tilesets` / `animations` / `mapInfos`（三者都是 flat
+  array，`upsert_database` 直接吃）
+- 新 `update_system` 工具：System.json 是單一 object 不是 array，`upsert_database` 的
+  列模型不適用，做 shallow merge（巢狀欄位如 `terms` 整塊替換）
+
+**驗收**：經 MCP 改遊戲標題、用語、tileset 通行 flag，編輯器開啟無損。
+
+---
+
+### M7 — 地圖 ・ 4 週
+
+原「L3.5 地圖合成」擴為編輯器對等的完整地圖能力，分兩半：
+
+**前半：編輯原語（0.2 新增範圍）**
+
+- **L0 create-file**：`ProjectSession` 支援新增檔案（created 集合；rollback 丟棄、commit
+  寫入、lock snapshot 納入）— 新建地圖的前置，目前 `updateFile` 對不存在的檔案 throw
+- `create_map` / `resize_map`：含 MapInfos 地圖樹維護
+- `paint_tiles` 原語：`index = (layer * height + y) * width + x`（§2.1）+
+  **autotile shape bits 計算**（tileId ≥ 2048 那組）— 這是確定性演算法，做對就是 100%
+- 通行度 / 地形標籤設定（Tilesets flags，配 M6.5 的表支援）
+
+**後半：合成（原 M7 範圍）**
+
 - 手作 20–30 個 prefab（房間、走廊、店舖、洞窟段、城鎮區塊）
 - 拼接器：BSP 或圖驅動，加通行度檢查與**連通性驗證**（保證每個事件都走得到）
 - 裝飾規則（靠牆放家具、門口留空）
 
-**務實提醒**：不要讓 LLM 逐格畫圖。LLM 負責「這張地圖要有哪些房間、什麼氛圍、事件放哪」，程式負責畫。
+**務實提醒**：不要讓 LLM 逐格畫圖。LLM 負責「這張地圖要有哪些房間、什麼氛圍、事件放哪」，程式負責畫；`paint_tiles` 是程式的原語，不是 LLM 的介面。
 
-**驗收**：生成 20 張地圖，100% 連通且所有事件可達；人工評分「看起來像人做的」≥ 70%。
+**驗收**：新建一張地圖、畫房間、設通行度，編輯器開啟顯示正確（autotile 接縫正確，見 §6
+R9）；生成 20 張地圖，100% 連通且所有事件可達；人工評分「看起來像人做的」≥ 70%。
+
+---
+
+### M7.5 — L2 事件編譯器 Tier 2 ・ 2.5 週
+
+§4.3 Tier 2 清單照做，**357 插件指令優先**（真實專案幾乎必用，也是 M7.6 插件管理的語意
+出口）；順手開放 `upsert_map_event` 的 `PageSpec.moveRoute`（目前寫死預設值）。
+
+**驗收**：同 M3 的 round-trip / idempotent 標準，涵蓋 Tier 2 全部 code。
+
+---
+
+### M7.6 — 插件與素材 ・ 1 週
+
+- `manage_plugins`：js/plugins.js 的 parse/write（§2.2 rein `handlers/plugins.ts` 當年
+  判定「留待有需求」，需求即此）
+- `import_asset`：把檔案複製進 `img/` / `audio/` 的正確子目錄，asset-catalog 即時反映
+
+**驗收**：經 MCP 啟用一個插件、匯入一張角色圖並在事件中引用，validate 綠燈、編輯器開啟無損。
 
 ---
 
 ### M8 ⭐⭐ — L5 headless 測試框架 ・ 8 週
 
 **全案最大宗、風險最集中。** 建議在 M6 完成、確認整條鏈有價值之後再投入。
+
+**前段交付（第 1 週內）：`playtest` 工具** — 搬 rein `handlers/playtest.ts` 的 http server
+半邊（§2.2 判定 ✅ 搬這一半），起本地站台開瀏覽器讓人試玩。這是編輯器 playtest 按鈕的
+對等品（§0 對照表），不等 harness 完工就先交付。
 
 已知的坑（逐項都要解）：
 
@@ -358,6 +435,19 @@ plan → generate(DSL) → compile → validate
 
 ---
 
+### M11 — 部署匯出與專案建立 ・ 1 週
+
+- `deploy`：web 打包（複製專案 + 以 RefIndex 剔除未引用素材）；Windows 為 NW.js 殼複製
+- `create_project`：從模板（fixture 的擴充版）新建可開啟的空專案
+
+編排上可提前——只依賴 L0/L1，不依賴 M8/M9/M10。排最後是因為對「取代編輯器」而言它是
+收尾動作，不是天天用的能力。
+
+**驗收**：對 fixture deploy 出的 web 包可在瀏覽器完整遊玩；`create_project` 產出的專案
+編輯器可直接開啟。
+
+---
+
 ### 3.1 總表
 
 | Milestone | 工時 | 累計 | 解鎖 |
@@ -369,16 +459,20 @@ plan → generate(DSL) → compile → validate
 | M4 L4 驗證器 | 2.5 週 | 10 | **Lv5, Lv7 靜態** |
 | M5 L3 MCP 層 | 1 週 | 11 | **Lv3 結構** |
 | M6 戰鬥模擬器 | 1.5 週 | 12.5 | **Lv3 平衡** |
-| M7 L3.5 地圖 | 3 週 | 15.5 | **Lv4** |
-| M8 L5 測試框架 | 8 週 | 23.5 | **Lv6, Lv7 動態** |
-| M9 L6 repair loop | 3 週 | 26.5 | **Lv8** |
-| M10 端到端 | 2 週 | 28.5 | **Lv9** |
+| M6.5 資料庫完備 | 0.5 週 | 13 | 對等：資料庫全表 |
+| M7 地圖 | 4 週 | 17 | **Lv4** + 對等：地圖 |
+| M7.5 L2 Tier 2 | 2.5 週 | 19.5 | 對等：事件全量 |
+| M7.6 插件與素材 | 1 週 | 20.5 | 對等：插件 / 素材匯入 |
+| M8 L5 測試框架 | 8 週 | 28.5 | **Lv6, Lv7 動態** + 對等：playtest |
+| M9 L6 repair loop | 3 週 | 31.5 | **Lv8** |
+| M10 端到端 | 2 週 | 33.5 | **Lv9** |
+| M11 部署 | 1 週 | 34.5 | 對等：部署 / 新建專案 |
 
 **三個明確的中止點**（每個都是可交付的完整產品）：
 
 - **M5 結束（11 週）** — Lv1-3 + Lv5 靜態。已經很有用，可以停在這裡。
-- **M7 結束（15.5 週）** — Lv1-5 全解。CP 值最佳點。
-- **M9 結束（26.5 週）** — Lv1-8。
+- **M7.6 結束（20.5 週）** — Lv1-5 全解 + 編輯器對等除 playtest/部署外全格。CP 值最佳點。
+- **M9 結束（31.5 週）** — Lv1-8。
 
 ---
 
@@ -477,7 +571,7 @@ event:
 355/655  腳本          357  插件指令（MZ 結構化）
 ```
 
-（「約 20 個」以命令組計，展開的 code 數約 33 個；截至 M5 尚未實作，屬 L2 Tier 2/3，M6 以後才排入。）
+（「約 20 個」以命令組計，展開的 code 數約 33 個；截至 M6 尚未實作，已排入 **M7.5**。）
 
 **Tier 3（視需求，不急）**：231–235 圖片系統、261 影片、載具、281–285 地圖顯示設定、331–333 敵人操作。
 
@@ -513,8 +607,9 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 
 ### 4.5 MCP 工具顆粒度
 
-不要學參考專案做 28–35 個 CRUD 工具。建議 **12–18 個**。下方每項標註交付的里程碑；
-沒標的都是 M5 已交付。
+不要學參考專案做 28–35 個 CRUD 工具。原建議 12–18 個；0.2 目標改為編輯器對等（§0）後
+上修為 **~20–24 個**——多出來的每一個都對應對照表的一格，不是 CRUD 細分。下方每項標註
+交付的里程碑；沒標的都是 M5 已交付。
 
 **讀（走 MCP resources 而非 tools）**
 - `rmmz://project/summary`、`rmmz://map/{id}`、`rmmz://database/{table}`、`rmmz://asset-catalog`
@@ -528,18 +623,23 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
   誤刪對話（新頁繼承舊頁的 `list`，新增頁才是空的）
 - `upsert_database(table, entries)` — 走 schema 驗證，shallow merge 到既有列或
   `IdAllocator` 配新 ID
-- `compose_map(spec)` — **M7**，走 L3.5，目前不存在
+- `update_system(patch)` — **M6.5**：System.json 是單一 object，走 shallow merge 而非列模型
+- `create_map(spec)` / `resize_map(...)` / `paint_tiles(...)` — **M7**：地圖生命週期與繪製原語
+- `compose_map(spec)` — **M7** 後半，走 L3.5，目前不存在
+- `manage_plugins(...)` — **M7.6**：js/plugins.js 條目的讀寫/啟停
+- `import_asset(...)` — **M7.6**：複製素材進 img/、audio/ 正確子目錄
 - `allocate_namespace(name, counts)`
 
 **驗證 / 測試**
 - `validate()` — M5 已交付（`@rmmz-kit/validate`）
 - `simulate_battle(spec)` — **M6** 已交付（`@rmmz-kit/battlesim`），對 session 的記憶體狀態跑，
   未 commit 的改動也能先問「這樣平衡壞了沒」
-- `playtest(scenario)` — **M8**，目前不存在
+- `playtest(scenario)` — **M8 前段**（起站台開瀏覽器）＋ M8 本體（headless 斷言），目前不存在
 - `coverage()` — **M8**，目前不存在
 
-**事務**
+**事務 / 專案**
 - `commit(message)`、`rollback()`、`diff()`
+- `create_project(template)` / `deploy(target)` — **M11**，目前不存在
 
 ### 4.6 為什麼不能走 rein 的 playtest 路線
 
@@ -572,7 +672,7 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 
 | ID | 風險 | 影響 | 機率 | 對策 |
 |---|---|---|---|---|
-| **R1** | MZ 是封閉軟體，JSON 格式與編輯器快取行為無官方 spec，全靠逆向 | 高 | 中 | 把所有格式假設集中在 L0 一個模組；建 golden file 測試；版本更新後跑一次 |
+| **R1** | MZ 是封閉軟體，JSON 格式與編輯器快取行為無官方 spec，全靠逆向 | 高 | 中 | 把所有格式假設集中在 L0 一個模組；建 golden file 測試；版本更新後跑一次。0.2 目標改為取代編輯器後，「寫出的檔案編輯器可無損開啟」從 nice-to-have 變**硬約束**（編輯器仍是人的 fallback），golden 涵蓋面隨 M6.5/M7 擴到 System / Tilesets / Map |
 | **R2** | M8 headless 測試框架超出預估 | 高 | **高** | M6 先做戰鬥模擬器取得部分價值；M8 設 timebox，超過 10 週就降級為「只跑事件層測試、不跑畫面」 |
 | **R3** | 編輯器同時開啟導致修改被覆蓋 | 中 | 高 | M1 就做 editor lock 偵測；文件明確警告 |
 | **R4** | repair loop 振盪把專案改爛 | 高 | 中 | git 分支隔離 + 迴歸測試 + 振盪偵測 + 次數上限 |
@@ -580,6 +680,7 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 | **R6** | MZ 內建素材**僅授權用於 MZ/MV 專案** | 低（本計畫）/ 高（Lv10） | — | 本計畫範圍內無影響；商業化路線需另行處理 |
 | **R7** | 復合成功率塌陷（各層 85% 串起來變 40%） | 高 | 高 | 這正是 M9 repair loop 存在的理由——它不是加分項，是讓復合成功率不塌的必要條件 |
 | **R8** | M5 交付的 MCP 工具層沒有 `gameStateInspector` 式的白名單（§2.2），`apply_script` 能寫入任意 DSL | 中 | 中 | 目前僅在受信任的單機 agent 情境使用；若要對外開放或多租戶，補一層 production 白名單再上線 |
+| **R9** | autotile shape bits 與 Tilesets 通行 flags 無官方 spec，算錯的地圖在編輯器裡直接顯示破圖 | 中 | 中 | 對照編輯器實際輸出建 golden fixture（在編輯器手畫樣張、比對本工具輸出）；M7 驗收含「編輯器開啟顯示正確」 |
 
 ---
 
@@ -604,6 +705,10 @@ M0–M6 已完成（見 `CLAUDE.md` status）。§8 原本的「起手三步」�
    的 `customConditions` 與 `vitest.config.ts` 的 `resolve.conditions`。
    `npm run build` 後 `node packages/mcp/dist/bin.js <project>` 可直接被
    Claude Desktop 這類 stdio client 接上。
-2. **M7 地圖合成**或 **M8 headless 測試框架**：M6 已驗證「靜態鏈 + 動態驗證」有價值，
-   照 §6 R2 的建議，M8 投入前先確認 timebox。
-3. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。
+2. **M6.5 資料庫完備**：編輯器對等（§0 對照表）最便宜的一格——`tables.ts` 加三表 +
+   `update_system`，半週。
+3. **M7 地圖**：先做 L0 create-file 前置，再 `create_map` / `paint_tiles` / autotile /
+   通行度，後半接原地圖合成。
+4. **M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）→ M11 部署**，順序見
+   §3.1；M8 投入前照 §6 R2 確認 timebox。
+5. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。
