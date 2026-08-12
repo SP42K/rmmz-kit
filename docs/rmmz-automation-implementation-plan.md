@@ -310,6 +310,18 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 
 **驗收**：經 MCP 改遊戲標題、用語、tileset 通行 flag，編輯器開啟無損。
 
+**已知缺口（實作後 code review 找出，刻意不在 M6.5 修）**：三項都是「`upsert_database`
+的通用列模型套在有額外不變量的表上」的同一個病灶，只是代價各異。已修的一項（MapInfos
+新增列會產生沒有 `Map###.json` 的幽靈地圖，而 `references/dangling-map` 又以 MapInfos
+為「地圖存在」的判準，於是 transfer 到幽靈地圖零 finding）已在本里程碑擋掉——改成只能編輯
+既有地圖，建檔是 `compose_map`（M7）的事。剩餘三項：
+
+| # | 缺口 | 代價 | 排程 |
+|---|---|---|---|
+| 1 | `tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆。目前只有「合併進既有列」這條路徑是安全的（也只有它有測試） | 中 | **M7**。tileset 本來就是地圖能力的一部分，新增 tileset 應與 `compose_map` 同批處理（給預設 flags 或走真正的建構工具）。在此之前補 per-table schema 正是 §4.5 說不要提前做的建模 |
+| 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事 |
+| 3 | `upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入 | 中 | 先修的一版（複製 `[...data]` 再寫回）會壞掉 `allocEntityId`——它讀的是 session 的即時陣列，多筆連續 append 靠這個拿到遞增 id。需要 allocator 與 updateFile 一起處理，歸到與 #2 同一批 |
+
 ---
 
 ### M7 — 地圖 ・ 4 週

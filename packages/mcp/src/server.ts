@@ -9,7 +9,7 @@ import * as tools from './tools.js';
  * L3 MCP tool layer (plan §3 M5): a thin adapter — every handler below is a
  * one-line call into resources.ts/tools.ts, which hold the actual logic and
  * are tested independently of any transport. Tool/resource grain follows
- * plan §4.5: 4 read resources, 9 write/validate/transaction tools (compose_map
+ * plan §4.5: 4 read resources, 10 write/validate/transaction tools (compose_map
  * and playtest/coverage from §4.5's list are still omitted — they front
  * L3.5/L5, which are M7/M8 and don't exist in this repo yet).
  */
@@ -49,7 +49,10 @@ function registerResources(server: McpServer, session: ProjectSession): void {
   server.registerResource(
     'database',
     new ResourceTemplate('rmmz://database/{table}', { list: undefined }),
-    { description: 'A database table (actors, classes, skills, items, weapons, armors, enemies, states, troops, commonEvents).' },
+    {
+      description:
+        'A database table (actors, classes, skills, items, weapons, armors, enemies, states, troops, commonEvents, tilesets, animations, mapInfos).',
+    },
     async (uri, { table }) => ({
       contents: [
         { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(databaseResource(session, String(table)), null, 2) },
@@ -133,13 +136,24 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   server.registerTool(
     'upsert_database',
     {
-      description: 'Shallow-merge entries into a database table by id (Actors, Classes, Skills, Items, Weapons, Armors, Enemies, States, Troops, CommonEvents). Omit id to append a new row.',
+      description:
+        'Shallow-merge entries into a database table by id (Actors, Classes, Skills, Items, Weapons, Armors, Enemies, States, Troops, CommonEvents, Tilesets, Animations, MapInfos). Omit id to append a new row — except for MapInfos, where only existing maps can be edited (a row without its Map###.json is an unloadable map).',
       inputSchema: { table: z.string(), entries: z.array(z.record(z.string(), z.unknown())) },
     },
     async ({ table, entries }) => {
       const ids = tools.upsertDatabase(session, table, entries as Array<Record<string, unknown> & { id?: number }>);
       return json({ ids });
     }
+  );
+
+  server.registerTool(
+    'update_system',
+    {
+      description:
+        'Shallow-merge a patch into System.json (game title, terms, currency unit, starting map/party, option flags). Nested fields such as `terms` are replaced whole, not deep-merged. Returns any patch keys the file did not already have — a typo shows up there.',
+      inputSchema: { patch: z.record(z.string(), z.unknown()) },
+    },
+    async ({ patch }) => json(tools.updateSystem(session, patch))
   );
 
   server.registerTool(

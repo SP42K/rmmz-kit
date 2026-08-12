@@ -134,6 +134,56 @@ describe('tools', () => {
     expect(alloc.switches[1]).toBe(alloc.switches[0] + 1);
   });
 
+  it('updateSystem shallow-merges, replacing a nested field whole and naming keys the file lacked', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const { newFields } = tools.updateSystem(session, {
+      gameTitle: 'Herb Quest',
+      terms: { basic: ['Lv'], messages: { actionFailure: 'Nothing happened.' } },
+      gametitle: 'typo',
+    });
+
+    const system = session.readFile<Record<string, unknown>>('System.json');
+    expect(system.gameTitle).toBe('Herb Quest');
+    expect(system.currencyUnit).toBe('G'); // untouched fields survive the merge
+    expect(system.terms).toEqual({ basic: ['Lv'], messages: { actionFailure: 'Nothing happened.' } });
+    // The typo isn't rejected (System's real key set is wider than SystemData),
+    // but it is reported, which is the only signal a caller gets.
+    expect(newFields).toEqual(['terms', 'gametitle']);
+  });
+
+  it('upsertDatabase refuses a MapInfos row with no map file, but renames an existing map', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    // Appending would create a map the game 404s on — and would make
+    // validate's dangling-map check accept transfers to it.
+    expect(() => tools.upsertDatabase(session, 'mapInfos', [{ name: 'Cave' }])).toThrow(/no map file/);
+    expect(() => tools.upsertDatabase(session, 'mapInfos', [{ id: 7, name: 'Cave' }])).toThrow(/Map007\.json/);
+    expect(session.dirtyFiles()).toEqual([]);
+
+    tools.upsertDatabase(session, 'mapInfos', [{ id: 1, name: 'Field' }]);
+    expect(session.readFile<Array<{ name: string } | null>>('MapInfos.json')[1]!.name).toBe('Field');
+  });
+
+  it('upsertDatabase edits a tileset passage flag (M6.5 acceptance)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const flags = [...session.readFile<Array<{ flags: number[] } | null>>('Tilesets.json')[1]!.flags];
+    flags[48] = 15;
+    tools.upsertDatabase(session, 'tilesets', [{ id: 1, flags }]);
+
+    const tileset = session.readFile<Array<{ flags: number[]; name: string } | null>>('Tilesets.json')[1]!;
+    expect(tileset.flags[48]).toBe(15);
+    expect(tileset.flags).toHaveLength(8192); // a short array here is a broken map in the editor
+    expect(tileset.name).toBe('Field'); // shallow merge, not replace
+  });
+
   it('simulateBattle reports on uncommitted data', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

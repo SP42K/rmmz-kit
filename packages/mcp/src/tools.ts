@@ -177,6 +177,25 @@ export function upsertDatabase(
   if (!file) {
     throw new Error(`Unknown database table: ${table}. Known tables: ${Object.keys(DATABASE_TABLES).join(', ')}`);
   }
+  // MapInfos is the editor's map *tree*, not a standalone table: a row with no
+  // Map###.json is a map the game 404s on and the editor can't open — and it
+  // also silences validate's references/dangling-map rule, which takes
+  // MapInfos as the ground truth for "map N exists", so a transfer to the
+  // phantom map passes validation. Creating the map file is compose_map's job
+  // (§4.5, M7), so only edits to maps that already exist are allowed here.
+  // Checked before updateFile, not inside the loop: the loop mutates `data` in
+  // place, so throwing mid-loop would leave earlier entries applied.
+  if (file === 'MapInfos.json') {
+    for (const entry of entries) {
+      if (entry.id === undefined || !session.listFiles().includes(mapFileName(entry.id))) {
+        throw new Error(
+          `Cannot write MapInfos row ${entry.id ?? '(appended)'}: ${entry.id === undefined ? 'a new map' : mapFileName(entry.id)} has no map file. ` +
+            `upsert_database can only edit (rename/re-parent) maps that already exist.`
+        );
+      }
+    }
+  }
+
   const allocator = new IdAllocator(session);
   const ids: number[] = [];
   session.updateFile<Array<Record<string, unknown> | null>>(file, (data) => {
@@ -196,6 +215,31 @@ export function upsertDatabase(
     }
   });
   return ids;
+}
+
+/**
+ * System.json is a single object, not an id-indexed array, so upsertDatabase's
+ * row model doesn't apply (plan §3 M6.5) — shallow merge instead: a nested
+ * field like `terms` or `titleBgm` is replaced whole, since the fields under it
+ * are only meaningful as a set and deep-merging System's many arrays
+ * (`switches`, `elements`, `menuCommands`) has no sensible element-wise rule.
+ *
+ * Unlike upsertMapEvent's page specs there is no unknown-key rejection here:
+ * core's `SystemData` is a deliberate subset of what MZ actually writes
+ * (`advanced`, `itemCategories`, `optAutosave`, ... aren't modeled), so an
+ * allowlist would reject legitimate fields — exactly the R1 failure mode. The
+ * returned `newFields` is the cheap substitute: a typo like `gametitle` shows
+ * up in the tool result as a field that wasn't already there.
+ */
+export function updateSystem(session: ProjectSession, patch: Record<string, unknown>): { newFields: string[] } {
+  let newFields: string[] = [];
+  session.updateFile<Record<string, unknown>>('System.json', (data) => {
+    // hasOwn, not `in`: `'toString' in data` is true for every JSON object, so
+    // `in` would silently drop exactly the keys most worth reporting.
+    newFields = Object.keys(patch).filter((key) => !Object.hasOwn(data, key));
+    return { ...data, ...patch };
+  });
+  return { newFields };
 }
 
 export function allocateNamespace(

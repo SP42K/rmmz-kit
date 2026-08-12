@@ -15,4 +15,10 @@ export const DATABASE_TABLES: Record<string, string> = {
   states: 'States.json',
   troops: 'Troops.json',
   commonEvents: 'CommonEvents.json',
+  // M6.5: also flat id-indexed arrays, so they need no new tool — only this
+  // line. System.json is the one database file that isn't (single object),
+  // which is what update_system exists for.
+  tilesets: 'Tilesets.json',
+  animations: 'Animations.json',
+  mapInfos: 'MapInfos.json',
 };
