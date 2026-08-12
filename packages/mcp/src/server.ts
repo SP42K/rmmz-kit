@@ -27,6 +27,49 @@ function json(text: unknown): CallToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(text, null, 2) }] };
 }
 
+const comparison = z.enum(['eq', 'gte', 'lte', 'gt', 'lt', 'neq']);
+const itemKind = z.enum(['item', 'weapon', 'armor']);
+const selfSwitchCh = z.enum(['A', 'B', 'C', 'D']);
+
+/**
+ * One `run_scenario` step. Spelled out rather than left as a free-form record
+ * because this schema *is* the instruction manual an LLM reads before writing a
+ * scenario — the same reason §4.5 makes the asset catalog a resource.
+ */
+const scenarioStep = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('runEvent'), map: z.number().int(), event: z.number().int(), page: z.number().int().min(1).optional() }),
+  z.object({ action: z.literal('runCommonEvent'), id: z.number().int() }),
+  z.object({ action: z.literal('setSwitch'), id: z.number().int(), value: z.boolean() }),
+  z.object({ action: z.literal('setVariable'), id: z.number().int(), value: z.number() }),
+  z.object({ action: z.literal('setSelfSwitch'), map: z.number().int(), event: z.number().int(), ch: selfSwitchCh, value: z.boolean() }),
+  z.object({ action: z.literal('gainGold'), amount: z.number().int() }),
+  z.object({ action: z.literal('gainItem'), kind: itemKind.optional(), id: z.number().int(), amount: z.number().int() }),
+  z.object({ action: z.literal('teleport'), map: z.number().int(), x: z.number().int(), y: z.number().int() }),
+  z.object({ action: z.literal('answerChoices'), choices: z.array(z.number().int()) }),
+  z.object({ action: z.literal('answerBattles'), outcomes: z.array(z.enum(['win', 'escape', 'lose'])) }),
+  z.object({
+    action: z.literal('expect'),
+    expect: z
+      .object({
+        switch: z.object({ id: z.number().int(), value: z.boolean() }).optional(),
+        variable: z.object({ id: z.number().int(), value: z.number(), cmp: comparison.optional() }).optional(),
+        selfSwitch: z.object({ map: z.number().int(), event: z.number().int(), ch: selfSwitchCh, value: z.boolean() }).optional(),
+        gold: z.object({ value: z.number(), cmp: comparison.optional() }).optional(),
+        item: z.object({ kind: itemKind.optional(), id: z.number().int(), count: z.number().optional(), cmp: comparison.optional() }).optional(),
+        partyHas: z.number().int().optional(),
+        playerAt: z.object({ map: z.number().int(), x: z.number().int().optional(), y: z.number().int().optional() }).optional(),
+        message: z.string().optional().describe('Some shown message line contains this substring'),
+        noMessage: z.string().optional().describe('No shown message line contains this substring'),
+        pluginCalled: z.object({ plugin: z.string(), command: z.string() }).optional(),
+        activePage: z
+          .object({ map: z.number().int(), event: z.number().int(), page: z.number().int() })
+          .optional()
+          .describe('The page MZ would run for this event right now (1-based, 0 = none)'),
+      })
+      .strict(),
+  }),
+]);
+
 function registerResources(server: McpServer, session: ProjectSession): void {
   server.registerResource(
     'project-summary',
@@ -373,6 +416,37 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       },
     },
     async (spec) => json(tools.simulateBattle(session, spec))
+  );
+
+  server.registerTool(
+    'playtest',
+    {
+      description:
+        "Local playtest site over the project (the editor's Playtest button): start it, stop it, ask its status, or stage the AutoTest.js plugin that exposes window.__AT for browser automation. Serves what is on disk, so commit() first to play uncommitted edits.",
+      inputSchema: {
+        action: z.enum(['start', 'stop', 'status', 'install-autotest']).optional().describe('Defaults to start'),
+        port: z.number().int().min(0).max(65535).optional().describe('0 (default) picks a free port'),
+        openBrowser: z.boolean().optional().describe('Open the URL in the OS default browser'),
+      },
+    },
+    async ({ action, port, openBrowser }) => json(await tools.playtest(session, action, { port, openBrowser }))
+  );
+
+  server.registerTool(
+    'run_scenario',
+    {
+      description:
+        'Run a headless event-layer scenario against the current in-memory data and report every assertion, the messages shown, the final state and event coverage. Runs event commands, not frames — no rendering, movement or battle math (use simulate_battle for that).',
+      inputSchema: {
+        name: z.string().optional(),
+        steps: z.array(scenarioStep).min(1),
+        choices: z.array(z.number().int()).optional().describe('Show Choices answers, in order; -1 takes the cancel branch'),
+        battles: z.array(z.enum(['win', 'escape', 'lose'])).optional().describe('Battle Processing outcomes, in order (default win)'),
+        maxCommands: z.number().int().min(1).optional().describe('Abort guard for a runaway event loop'),
+        newGame: z.boolean().optional().describe("Start from System.json's new-game party/position (default) or from nothing"),
+      },
+    },
+    async (scenario) => json(tools.runScenarioTool(session, scenario))
   );
 
   server.registerTool(

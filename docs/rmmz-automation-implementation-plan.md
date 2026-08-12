@@ -75,8 +75,8 @@ v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在�
 | 插件管理（js/plugins.js） | `manage_plugins` | ✓ | M7.6 已交付 |
 | 素材：清單 | `rmmz://asset-catalog` | ✓ | M5 已交付 |
 | 素材：匯入 | `import_asset` | ✓ | M7.6 已交付 |
-| 測試遊玩（起遊戲給人玩） | `playtest`（http server + 瀏覽器） | ✗ | M8 前段 |
-| headless 測試 / 斷言 | M8 harness | ✗ | M8 |
+| 測試遊玩（起遊戲給人玩） | `playtest`（http server + 瀏覽器） | ✓ | M8 已交付 |
+| headless 測試 / 斷言 | `run_scenario`（事件層）＋ `AutoTest.js` | △ 事件層 ✓、跑畫面 ✗（§6 R2 降級，理由見 M8 實作結果） | M8 已交付 |
 | 部署匯出（web / Windows、未用素材剔除） | `deploy` | ✗ | M11 |
 | 新建專案 | `create_project`（fixture 為模板） | ✗ | M11 |
 
@@ -507,6 +507,48 @@ expect(await at.partyHasItem(7)).toBe(true);
 
 **驗收**：對 fixture 跑完一條 3 事件的任務鏈，全綠，單次執行 < 10 秒。
 
+**實作結果**：`packages/playtest`（`server.ts` / `state.ts` / `interpreter.ts` / `scenario.ts`
+＋套件根目錄的 `AutoTest.js`）＋ MCP 的 `playtest` / `run_scenario`。**本里程碑是照 §6 R2 的
+降級條款交付的——「只跑事件層測試、不跑畫面」**，但觸發條件不是工時超支，是算術：MZ 的 runtime
+（`js/rmmz_*.js`、PIXI、場景圖）隨付費編輯器出貨，`fixtures/minimal-project` 裡沒有遊戲可開。
+上面那張「已知的坑」表，每一列都是**跑起 MZ 之後**才踩得到的坑；在這個 repo 裡它們一個都踩不到、
+修不了、也重現不出來。
+
+三段交付：
+
+1. **前段 `playtest`（照原訂第 1 週交付）**：`node:http` 起專案根目錄的站台。沒有搬
+   `serve-handler`——那是參考專案本來就有的依賴，為了服務一個目錄不值得多一個供應鏈節點。
+   逃逸檢查用 `path.relative` 的包含判定而非過濾 `..`（`decodeURIComponent` 之後才判，編碼形也擋）。
+2. **事件層 headless runtime**：`Game_Interpreter` 的命令語意，跑在 L2 的**樹**（`decompile()`）
+   上而不是 MZ 走的扁平陣列上。MZ 用 `_indent` 前掃跳過分支；樹已經把那個結構表達完了，而且
+   M3/M7.5 兩個方向都驗過，所以這裡的分支/迴圈就是遞迴，不必再維護第二套 indent 對齊
+   （同 `@rmmz-kit/validate` 的 structure 規則的複用邏輯）。事件頁選擇照 MZ 的由下往上匹配。
+   兩件 MZ 交給玩家的事改由佇列回答並在報告裡回述，不是猜：Show Choices 的選項、Battle
+   Processing 的結果（只決定走哪個分支，勝負數學是 `simulate_battle` 的事）。
+3. **`AutoTest.js`**：§3 M8 列的 `__AT` API 全數實作，`playtest` 的 `install-autotest` 動作把它
+   連同 `js/plugins.js` 條目一起走事務暫存。
+
+**沒有靜靜近似**是這一層的設計核心：所有不模擬的命令（Script、移動路線、商店、script 條件式、
+角色數值類）都累加進報告的 `unmodeled`，**一份 unmodeled 非空的全綠報告，證明的東西比看起來少**
+——這個計數器就是「降級」與「假貨」的差別。插件指令則是記錄而非執行，所以獎勵走插件發放的專案
+仍然斷言得到。跑不完的迴圈撞命令預算後 throw，那是這一層真正抓得到的一類卡關。
+
+覆蓋率沒有做成第 20 個工具（§4.5 的 `coverage()`）：沒有 scenario 撐著的覆蓋率是一張零表，所以
+它併進 `run_scenario` 的報告，而且統計**全專案每一條命令列**而非只有跑過的——「哪條任務沒人測過」
+才是值得問的問題。`decompile()` 吃不下的列進 `unparsed` 而不是算 0%（那是 `validate` 該報的結構
+錯誤，藏進百分比等於沒報）；fixture 自己的 EV001 就是這種列（Break Loop 縮排與 Loop 同層）。
+
+**驗收：可量的那半達成，需要真遊戲的那半沒達成。** 三事件任務鏈在 fixture 上全綠、單次執行約
+1 ms（`test/scenario.test.ts`；測試輸出上的秒數是每測一次的 fixture 複製＋`git init`，不是跑分）。
+另一半——瀏覽器、畫面、Playwright——沒有做，也沒有留空殼：
+
+| 缺口 | 為什麼 | 怎麼補 |
+|---|---|---|
+| 不起瀏覽器、不驅動 Playwright | 沒有 MZ runtime 可驅動；加一個沒東西可驅動的 driver 是鷹架不是產品，且無法在 CI 驗證 | 對真實授權專案：`playtest` → `install-autotest` → `commit` → Playwright 開 URL，用 `page.evaluate` 呼叫 `window.__AT`。斷言語彙與報告格式就是 `run_scenario` 現在這套，缺的是傳輸層不是測試模型 |
+| `AutoTest.js` 只對 stub 驗過 | 同上。stub 測試抓的是「注入插件真正會壞的方式」——打錯字或成員改名，開場即 crash | 有真專案時跑一次即知；本套件不需要改動 |
+| 幀、渲染、移動、TPB | 事件層降級的定義本身 | 同上；`Wait` 只累加計數 |
+| 存讀檔 / localStorage 清空 | 這一層不經過 `DataManager`，沒有存檔路徑 | 隨瀏覽器半邊一起 |
+
 ---
 
 ### M9 — L6 Agent repair loop ・ 3 週
@@ -739,8 +781,13 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 - `validate()` — M5 已交付（`@rmmz-kit/validate`）
 - `simulate_battle(spec)` — **M6** 已交付（`@rmmz-kit/battlesim`），對 session 的記憶體狀態跑，
   未 commit 的改動也能先問「這樣平衡壞了沒」
-- `playtest(scenario)` — **M8 前段**（起站台開瀏覽器）＋ M8 本體（headless 斷言），目前不存在
-- `coverage()` — **M8**，目前不存在
+- `playtest(...)` — **M8 已交付**：起站台／停站台／狀態／`install-autotest`（暫存 `AutoTest.js`
+  與其 plugins.js 條目）。服務的是磁碟上的檔案，所以要試玩未 commit 的改動得先 commit
+- `run_scenario(scenario)` — **M8 已交付**：headless 斷言那半，跑在記憶體 session 上（同
+  `simulate_battle`）。§4.5 原本把它與起站台併在 `playtest(scenario)` 一個名字下，實作拆成兩個
+  ——一個是給人開瀏覽器，一個是給 agent 讀報告，共用不了輸入也共用不了輸出
+- ~~`coverage()`~~ — **M8 決定不獨立成工具**：沒有 scenario 撐著的覆蓋率是一張零表，改併進
+  `run_scenario` 的報告
 
 **事務 / 專案**
 - `commit(message)`、`rollback()`、`diff()`
@@ -803,7 +850,8 @@ Lv10（長篇商業 RPG 全自動）**刻意不在本計畫範圍內**，理由�
 
 ## 8. 下一步
 
-M0–M6 已完成（見 `CLAUDE.md` status）。§8 原本的「起手三步」已全部達成，改列目前真正的下一步：
+M0–M8 已完成（見 `CLAUDE.md` status；M8 是照 §6 R2 降級成事件層交付的，理由與缺口見該節
+「實作結果」）。§8 原本的「起手三步」已全部達成，改列目前真正的下一步：
 
 1. ~~**決定 issue #7**~~：已解決 — 五個套件都加了 `exports` map（`rmmz-kit-source`
    自訂 condition 指向 TS 原始碼，`default` 指向 `dist/`），外加 `tsconfig.base.json`
@@ -814,6 +862,10 @@ M0–M6 已完成（見 `CLAUDE.md` status）。§8 原本的「起手三步」�
    `update_system`，半週。
 3. **M7 地圖**：先做 L0 create-file 前置，再 `create_map` / `paint_tiles` / autotile /
    通行度，後半接原地圖合成。
-4. **M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）→ M11 部署**，順序見
-   §3.1；M8 投入前照 §6 R2 確認 timebox。
-5. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。
+4. ~~**M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）**~~：已完成。剩下
+   **M9 repair loop → M10 端到端 → M11 部署**，順序見 §3.1。M9 的迴歸測試集與失敗軌跡回饋
+   直接吃 `run_scenario` 的報告（`failures` / `state` / `coverage`），不需要新介面。
+5. **M8 的瀏覽器半邊**：要在真實授權專案上補（見 M8 「實作結果」的缺口表）。這是唯一一個
+   「本 repo 內做不完」的項目，不是待辦而是前提。
+6. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。`playtest`
+   起的站台預設只綁 loopback，同一條理由。

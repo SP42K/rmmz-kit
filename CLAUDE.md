@@ -26,7 +26,11 @@ L3.5 done (`packages/mapgen`: autotiles, map lifecycle, paint/passage
 primitives, BSP composition — see below). M7.5 done (L2 Tier 2: the remaining
 §4.3 command groups, plus `PageSpec.moveRoute` — see below). M7.6 done
 (`manage_plugins`, `import_asset`, and the staged non-data writes in core they
-sit on — see below). L2 Tier 3 and everything from M8 onward not started.
+sit on — see below). M8 / L5 done **as the plan's own R2 fallback**
+(`packages/playtest`: playtest server, headless *event-layer* runtime and
+scenario assertions, `AutoTest.js` — the browser half cannot be closed from
+inside this repo, see below). L2 Tier 3 and everything from M9 onward not
+started.
 
 ## Commands
 
@@ -39,6 +43,7 @@ npx tsc -p packages/compiler/tsconfig.json --noEmit
 npx tsc -p packages/validate/tsconfig.json --noEmit
 npx tsc -p packages/battlesim/tsconfig.json --noEmit
 npx tsc -p packages/mapgen/tsconfig.json --noEmit
+npx tsc -p packages/playtest/tsconfig.json --noEmit
 npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
@@ -222,15 +227,14 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 17 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
+plus 19 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
 `create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`, `manage_plugins`,
-`import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`,
-`rollback`). §4.5 also lists
-`playtest` and `coverage` — omitted here because they front L5 (M8), which
-doesn't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
-decision A (MCP is a thin transport over real logic, not the other way around). `simulate_battle`
-runs against the *in-memory* session, so an agent can ask "did that buff break the boss fight?"
-about an edit it has not committed.
+`import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`, `run_scenario`,
+`diff`, `commit`, `rollback`). §4.5's `coverage()` is *not* a twentieth: coverage with no scenario
+behind it is a table of zeroes, so it rides in `run_scenario`'s report instead. `simulate_battle`
+and `run_scenario` both run against the *in-memory* session, so an agent can ask "did that buff
+break the boss fight?" or "does the quest still complete?" about an edit it has not committed —
+`playtest` is the exception and serves what is on disk, because a browser reads files, not memory.
 
 `apply_script` and `upsert_map_event` are deliberately split: `upsert_map_event` is a full-replace
 declarative write of one event's metadata + pages (conditions/trigger/image — nothing that makes
@@ -391,6 +395,78 @@ Deliberately out of scope: an "every event is reachable" *validator* rule. `anal
 exports the machinery and `compose_map` uses it, but running it over hand-made maps warns on
 things that are fine (parallel-process events parked at 0,0, decoration events on impassable
 tiles), and a validator that cries wolf gets ignored wholesale.
+
+### L5 playtest and headless testing (`packages/playtest`)
+
+**M8 is delivered as the plan's own R2 fallback — "只跑事件層測試、不跑畫面" — and the trigger
+was not a timebox overrun but arithmetic: MZ's runtime (`js/rmmz_*.js`, PIXI, the scene graph)
+ships with the paid editor, so `fixtures/minimal-project` has no game to boot.** Every row of §3
+M8's known-traps table (swiftshader, WebAudio stubs, rAF vs logical frames, TPB determinism) is a
+trap you hit *while running MZ*; none of them can be hit, or fixed, or even reproduced here. What
+is buildable and checkable from inside this repo is the layer under them — the interpreter's
+command semantics — and that is where the assertions a generated quest fails would live anyway
+(§4.6 already argues for driving the state machine instead of the UI).
+
+Four modules plus one plugin, in the order data flows:
+
+- `server.ts` — the front-half deliverable (§3 M8's first week): `node:http` over the project
+  root, which is the editor's Playtest button's equivalent. MZ's `index.html` `fetch`es
+  `data/*.json`, so `file://` fails CORS and a server is the entire requirement; the plan named
+  `serve-handler` because the reference repo already had it, and one directory is not worth a
+  dependency. The traversal guard is a `path.relative` containment test, not a `..` filter —
+  this serves a whole project directory, including whatever else lives under it.
+- `state.ts` — the slice of game state event commands read and write: switches, variables, self
+  switches, inventory (three id spaces behind one prefixed key), party, player position, shown
+  messages. HP/MP/states are deliberately absent: `@rmmz-kit/battlesim` already models them
+  properly, and a second half-model would just disagree with the first.
+- `interpreter.ts` — `Game_Interpreter`'s semantics over the L2 *tree* (`decompile()`), not over
+  the flat list MZ walks. MZ tracks `_indent` and skips branches by scanning forward; the tree
+  already encodes that, correctly, in both directions since M3/M7.5, so branches and loops are
+  plain recursion here and there is no second indent-matcher to keep in sync — the same reuse
+  `@rmmz-kit/validate`'s structure rule makes. Page selection is MZ's own last-to-first condition
+  match. Two things MZ leaves to a human are answered from a queue and echoed in the report rather
+  than guessed silently: Show Choices answers, and Battle Processing outcomes (which branch ran,
+  not who won — damage math is `simulate_battle`'s job). Everything the layer does not model
+  (Script, Set Movement Route, Shop, script-typed conditions, battler-state commands) increments
+  `unmodeled` instead of being skipped quietly, because **a green scenario with a non-empty
+  `unmodeled` proved less than it looks** — that counter is the difference between a fallback and
+  a fake. Plugin commands are recorded, not run, so a project whose rewards go through a plugin
+  can still be asserted on. A runaway loop hits a command budget and throws, which is the one
+  softlock class this layer genuinely catches.
+- `scenario.ts` — the agent-facing surface: a scenario is *data* (steps + assertions), and the
+  report says which check failed with expected/actual, what was shown, the final state and the
+  coverage. That shape is chosen for M9's repair loop, which needs a failure trajectory rather
+  than a test runner's stdout. A step that *throws* stops the run (every later assertion would be
+  about a game that never got there); a failed *assertion* does not.
+- `AutoTest.js` (package root, not `src/`) — the injected MZ plugin from §3 M8, exposing
+  `window.__AT` with the plan's API (`teleport` / `runEvent` / `setSwitch` / `dumpState` / `seed` /
+  `step` / `waitIdle` / `captureMessages` / `coverage`). It lives at the package root because
+  `src/autotest.ts` and the built `dist/autotest.js` are both exactly one directory below it, so
+  `new URL('../AutoTest.js', import.meta.url)` resolves in both and no build step has to copy an
+  asset. `playtest`'s `install-autotest` action stages it plus its `js/plugins.js` entry through
+  the same transaction as everything else.
+
+Coverage (§4.5's `coverage()`) is folded into the scenario report rather than being its own tool,
+and it is counted over *every* command list in the project, not only the ones a scenario touched —
+"which quests has nobody tested" is the question worth asking. A list `decompile()` refuses is
+named in `unparsed` instead of being scored 0%: that is a structural bug `validate` reports
+properly, and burying it in a percentage hides it. The fixture's own EV001 is such a list (a Break
+Loop at the Loop's own indent), which is why the tests assert it by name.
+
+**Acceptance, honestly split.** The measurable half is met: the plan's three-event herb chain runs
+green on the fixture in ~1 ms (`test/scenario.test.ts`; the seconds in the test output are the
+per-test fixture copy + `git init`, not the run). The half that needs a real game is not met and
+cannot be from here — no browser is driven, no frame is rendered, and there is no Playwright
+dependency, because a driver with nothing to drive is scaffolding. `AutoTest.js` is verified only
+against stubs in `test/autotest.test.ts`: that catches the failure mode an injected plugin actually
+has (a typo or renamed member taking the game down on boot) and proves nothing about behaviour
+against a real `Game_Map`.
+
+To close it later, on a real licensed project: `playtest` → `install-autotest` → `commit` → point
+Playwright at the URL and call `window.__AT` over `page.evaluate`. The assertion vocabulary and the
+report shape are already the ones `run_scenario` uses, so what is missing is the transport, not the
+test model. Nothing in this package should need to change — which is why this is written here
+rather than left as a TODO in code.
 
 ### Legacy JS carried over
 

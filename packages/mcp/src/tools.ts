@@ -26,6 +26,16 @@ import {
   type TileFlagSpec,
 } from '@rmmz-kit/mapgen';
 import { formatPluginsJs, parsePluginsJs, PLUGINS_FILE, type PluginEntry } from './plugins.js';
+import {
+  AUTOTEST_PLUGIN_NAME,
+  AUTOTEST_PLUGIN_PATH,
+  autoTestSource,
+  runScenario,
+  startPlaytestServer,
+  type PlaytestServer,
+  type Scenario,
+  type ScenarioReport,
+} from '@rmmz-kit/playtest';
 import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 /**
@@ -363,6 +373,62 @@ export function validate(session: ProjectSession): Promise<Finding[]> {
  */
 export function simulateBattle(session: ProjectSession, spec: BattleSpec): BattleReport {
   return simulate(session, spec);
+}
+
+/**
+ * `playtest` (plan §4.5, M8's front half): the editor's Playtest button's
+ * equivalent — a local site over the project so a human can open the game and
+ * try it. One server per process, because the point is a URL a person is
+ * looking at; starting it twice would just orphan the first port.
+ *
+ * `install-autotest` stages `js/plugins/AutoTest.js` plus its js/plugins.js
+ * entry, which is what turns that browser session into a drivable one
+ * (`window.__AT`). It is staged like every other change: nothing is on disk
+ * until commit(), so a playtest of *uncommitted* edits needs a commit first —
+ * unlike `run_scenario`, which runs against the in-memory session directly.
+ */
+let runningPlaytest: PlaytestServer | null = null;
+
+export type PlaytestAction = 'start' | 'stop' | 'status' | 'install-autotest';
+
+export async function playtest(
+  session: ProjectSession,
+  action: PlaytestAction = 'start',
+  options: { port?: number; openBrowser?: boolean } = {}
+): Promise<Record<string, unknown>> {
+  switch (action) {
+    case 'start':
+      if (!runningPlaytest) runningPlaytest = await startPlaytestServer(session.rootPath, options);
+      return { running: true, url: runningPlaytest.url, root: session.rootPath };
+    case 'stop':
+      await runningPlaytest?.close();
+      runningPlaytest = null;
+      return { running: false };
+    case 'status':
+      return runningPlaytest ? { running: true, url: runningPlaytest.url } : { running: false };
+    case 'install-autotest': {
+      session.writeRaw(AUTOTEST_PLUGIN_PATH, autoTestSource());
+      const entries = await managePlugins(session, [
+        { name: AUTOTEST_PLUGIN_NAME, status: true, description: 'rmmz-kit automation hooks (window.__AT)' },
+      ]);
+      return {
+        file: AUTOTEST_PLUGIN_PATH,
+        plugins: entries.map((entry) => entry.name),
+        note: 'Staged only — commit() writes it. Disable the plugin before shipping the game.',
+      };
+    }
+  }
+}
+
+/**
+ * `playtest(scenario)`'s headless half (plan §4.5): run a scenario against the
+ * *in-memory* session — the same "test the edit before committing it" property
+ * `simulate_battle` has. §4.5 also lists a separate `coverage()`; it is folded
+ * into this report instead, because coverage with no scenario behind it is a
+ * table of zeroes.
+ */
+export function runScenarioTool(session: ProjectSession, scenario: Scenario): ScenarioReport {
+  return runScenario(session, scenario);
 }
 
 export function commit(session: ProjectSession, message: string): Promise<string | null> {

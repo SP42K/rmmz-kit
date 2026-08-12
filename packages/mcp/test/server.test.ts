@@ -48,6 +48,8 @@ describe('MCP server wiring', () => {
         'compose_map',
         'manage_plugins',
         'import_asset',
+        'playtest',
+        'run_scenario',
         'diff',
         'commit',
         'rollback',
@@ -288,6 +290,88 @@ describe('MCP server wiring', () => {
       ((await reopened.readResource({ uri: 'rmmz://database/mapInfos' })).contents[0] as { text: string }).text
     ) as Array<{ name: string } | null>;
     expect(infos[2]!.name).toBe('Herb Cave');
+  });
+
+  /** Plan §3 M8 acceptance, over the protocol: author a quest, then assert its state without playing it. */
+  it('writes an event and tests it with run_scenario in the same session', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    const created = text(
+      await client.callTool({
+        name: 'upsert_map_event',
+        arguments: { mapId: 1, name: 'Herbalist', x: 3, y: 4, pages: [{ trigger: 0 }] },
+      })
+    ) as { id: number };
+
+    text(
+      await client.callTool({
+        name: 'apply_script',
+        arguments: {
+          target: { map: 1, event: created.id, page: 1 },
+          dsl: `
+- choice:
+    branches:
+      Sure:
+        - setSwitch: { from: 10, value: true }
+        - say: "Thank you!"
+      Not now:
+        - say: "…so be it."
+`,
+        },
+      })
+    );
+
+    const report = text(
+      await client.callTool({
+        name: 'run_scenario',
+        arguments: {
+          name: 'accepts the quest',
+          choices: [0],
+          steps: [
+            { action: 'runEvent', map: 1, event: created.id },
+            { action: 'expect', expect: { switch: { id: 10, value: true }, message: 'Thank you!' } },
+          ],
+        },
+      })
+    ) as { pass: boolean; failures: string[]; coverage: { messagesVisited: number } };
+
+    expect(report.failures).toEqual([]);
+    expect(report.pass).toBe(true);
+    expect(report.coverage.messagesVisited).toBe(1);
+
+    // The wrong answer is a different, also-green scenario — the report is what
+    // says which branch was taken, not the tool's success.
+    const declined = text(
+      await client.callTool({
+        name: 'run_scenario',
+        arguments: {
+          choices: [1],
+          steps: [
+            { action: 'runEvent', map: 1, event: created.id },
+            { action: 'expect', expect: { switch: { id: 10, value: true } } },
+          ],
+        },
+      })
+    ) as { pass: boolean; failures: string[] };
+    expect(declined.pass).toBe(false);
+    expect(declined.failures[0]).toContain('switch 10');
+  });
+
+  it('serves the project over the playtest tool and stops again', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    const started = text(await client.callTool({ name: 'playtest', arguments: {} })) as { url: string };
+    cleanups.push(async () => {
+      await client.callTool({ name: 'playtest', arguments: { action: 'stop' } });
+    });
+    expect((await fetch(`${started.url}data/Map001.json`)).status).toBe(200);
+
+    text(await client.callTool({ name: 'playtest', arguments: { action: 'stop' } }));
+    expect(text(await client.callTool({ name: 'playtest', arguments: { action: 'status' } }))).toEqual({ running: false });
   });
 
   it('reports a tool error instead of throwing when applying a script to a nonexistent page', async () => {
