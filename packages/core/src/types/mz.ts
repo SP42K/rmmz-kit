@@ -243,6 +243,7 @@ export interface MapData {
   encounterStep: number;
   height: number;
   width: number;
+  note: string;
   parallaxLoopX: boolean;
   parallaxLoopY: boolean;
   parallaxName: string;
@@ -254,6 +255,17 @@ export interface MapData {
   tilesetId: number;
   data: number[];
   events: (MapEvent | null)[];
+}
+
+/** A row of MapInfos.json — the editor's map tree, one entry per Map###.json. */
+export interface MapInfo {
+  id: number;
+  name: string;
+  parentId: number;
+  order: number;
+  expanded: boolean;
+  scrollX: number;
+  scrollY: number;
 }
 
 export interface MapEvent {

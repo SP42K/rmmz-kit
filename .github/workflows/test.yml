@@ -19,5 +19,6 @@ jobs:
       - run: npx tsc -p packages/compiler/tsconfig.json --noEmit
       - run: npx tsc -p packages/validate/tsconfig.json --noEmit
       - run: npx tsc -p packages/battlesim/tsconfig.json --noEmit
+      - run: npx tsc -p packages/mapgen/tsconfig.json --noEmit
       - run: npx tsc -p packages/mcp/tsconfig.json --noEmit
       - run: npx vitest run

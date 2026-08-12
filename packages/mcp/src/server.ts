@@ -9,9 +9,9 @@ import * as tools from './tools.js';
  * L3 MCP tool layer (plan §3 M5): a thin adapter — every handler below is a
  * one-line call into resources.ts/tools.ts, which hold the actual logic and
  * are tested independently of any transport. Tool/resource grain follows
- * plan §4.5: 4 read resources, 10 write/validate/transaction tools (compose_map
- * and playtest/coverage from §4.5's list are still omitted — they front
- * L3.5/L5, which are M7/M8 and don't exist in this repo yet).
+ * plan §4.5: 4 read resources, 15 write/validate/transaction tools (playtest and
+ * coverage from §4.5's list are still omitted — they front L5, which is M8 and
+ * doesn't exist in this repo yet).
  */
 export function createServer(session: ProjectSession): McpServer {
   const server = new McpServer({ name: 'rmmz-kit', version: '0.1.0' });
@@ -154,6 +154,129 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       inputSchema: { patch: z.record(z.string(), z.unknown()) },
     },
     async ({ patch }) => json(tools.updateSystem(session, patch))
+  );
+
+  server.registerTool(
+    'create_map',
+    {
+      description:
+        'Create a new map: writes Map###.json and its MapInfos tree row, and returns the allocated map id. Optionally floods layer 0 with one tile.',
+      inputSchema: {
+        name: z.string(),
+        width: z.number().int().min(1).max(256),
+        height: z.number().int().min(1).max(256),
+        tilesetId: z.number().int().optional(),
+        parentId: z.number().int().optional().describe('Parent map in the editor tree; 0 (default) is the root'),
+        fillTileId: z.number().int().optional().describe('Tile id to flood layer 0 with; pass an autotile kind\'s base id, shapes are derived'),
+      },
+    },
+    async (spec) => json(tools.createMapTool(session, spec))
+  );
+
+  server.registerTool(
+    'resize_map',
+    {
+      description:
+        'Resize a map, anchored top-left: overlapping tiles keep their coordinates, new area is empty. Events are never moved; any left outside the new bounds are returned.',
+      inputSchema: {
+        mapId: z.number().int(),
+        width: z.number().int().min(1).max(256),
+        height: z.number().int().min(1).max(256),
+      },
+    },
+    async ({ mapId, width, height }) => json(tools.resizeMapTool(session, mapId, width, height))
+  );
+
+  server.registerTool(
+    'paint_tiles',
+    {
+      description:
+        'Fill rectangles of one map layer with a tile id, then re-derive autotile shape bits over what changed (and its neighbours). Layers: 0-1 ground, 2-3 upper tiles, 4 shadow, 5 region id.',
+      inputSchema: {
+        mapId: z.number().int(),
+        ops: z
+          .array(
+            z
+              .object({
+                x: z.number().int().nonnegative(),
+                y: z.number().int().nonnegative(),
+                width: z.number().int().min(1).optional().describe('Defaults to 1'),
+                height: z.number().int().min(1).optional().describe('Defaults to 1'),
+                tileId: z.number().int().min(0).max(8191),
+              })
+              .strict()
+          )
+          .min(1),
+        layer: z.number().int().min(0).max(5).optional().describe('Defaults to 0'),
+        autotile: z.boolean().optional().describe('Defaults to true; turn off only to write raw shape bits verbatim'),
+      },
+    },
+    async (spec) => {
+      tools.paintTilesTool(session, spec);
+      return json({ ok: true });
+    }
+  );
+
+  server.registerTool(
+    'set_tile_flags',
+    {
+      description:
+        'Set passability, terrain tags and tile options (star/ladder/bush/counter/damage) for individual tile ids in one tileset. Omitted properties keep their current value.',
+      inputSchema: {
+        tilesetId: z.number().int(),
+        tiles: z
+          .array(
+            z
+              .object({
+                tileId: z.number().int().min(0).max(8191),
+                passage: z
+                  .object({
+                    down: z.boolean().optional(),
+                    left: z.boolean().optional(),
+                    right: z.boolean().optional(),
+                    up: z.boolean().optional(),
+                  })
+                  .strict()
+                  .optional()
+                  .describe('true = passable in that direction'),
+                star: z.boolean().optional().describe('Drawn above the player and exempt from passage checks'),
+                ladder: z.boolean().optional(),
+                bush: z.boolean().optional(),
+                counter: z.boolean().optional(),
+                damage: z.boolean().optional(),
+                terrainTag: z.number().int().min(0).max(7).optional(),
+              })
+              .strict()
+          )
+          .min(1),
+      },
+    },
+    async ({ tilesetId, tiles }) => {
+      tools.setTileFlagsTool(session, tilesetId, tiles);
+      return json({ ok: true });
+    }
+  );
+
+  server.registerTool(
+    'compose_map',
+    {
+      description:
+        'Generate a connected room-and-corridor map (BSP) and create it. Returns the map id and the room rectangles to place events in — decide which rooms hold what, do not paint tile by tile.',
+      inputSchema: {
+        name: z.string(),
+        width: z.number().int().min(1).max(256).optional(),
+        height: z.number().int().min(1).max(256).optional(),
+        tilesetId: z.number().int().optional(),
+        parentId: z.number().int().optional(),
+        floorTileId: z.number().int().min(0).max(8191).optional().describe('Autotile base id for room floors; default 2816'),
+        wallTileId: z.number().int().min(0).max(8191).optional().describe('Autotile base id for the solid around them; default 5888'),
+        minRoom: z.number().int().min(1).optional(),
+        minPartition: z.number().int().min(3).optional().describe('Larger = fewer, bigger rooms; default 12'),
+        seed: z.number().int().optional(),
+        setFlags: z.boolean().optional().describe('Write passage flags for the two tiles used; default true'),
+      },
+    },
+    async (spec) => json(tools.composeMapTool(session, spec))
   );
 
   server.registerTool(

@@ -21,8 +21,10 @@ IR, emit, decompile — see below). M4 / L4 done (`packages/validate`: structure
 reference-integrity, and semantic/graph rules — see below). M5 / L3 done
 (`packages/mcp`: MCP tool/resource layer — see below). M6 / L4.5 done
 (`packages/battlesim`: headless battle simulator — see below). M6.5 done
-(Tilesets/Animations/MapInfos in `upsert_database`, plus `update_system`). L2
-Tier 2/3 and everything from M7 onward not started.
+(Tilesets/Animations/MapInfos in `upsert_database`, plus `update_system`). M7 /
+L3.5 done (`packages/mapgen`: autotiles, map lifecycle, paint/passage
+primitives, BSP composition — see below). L2 Tier 2/3 (M7.5) and everything
+from M7.6 onward not started.
 
 ## Commands
 
@@ -34,6 +36,7 @@ npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
 npx tsc -p packages/compiler/tsconfig.json --noEmit
 npx tsc -p packages/validate/tsconfig.json --noEmit
 npx tsc -p packages/battlesim/tsconfig.json --noEmit
+npx tsc -p packages/mapgen/tsconfig.json --noEmit
 npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
@@ -69,6 +72,15 @@ and throws before touching disk, so a failed agent attempt never pollutes the pr
 validation belongs in `validate()`, not in `commit()`'s write loop.
 
 Only dirty files are written. `updateFile()` marks dirty; `readFile()` must not.
+
+`createFile()` (M7, the prerequisite for `create_map`) adds a file the project doesn't have. It
+joins the same transaction — invisible on disk until `commit()`, dropped whole by `rollback()` —
+but tracks its names in a separate `created` set, because the two ends differ: rollback has no
+original text to re-parse, and the mtime snapshot has nothing to compare against, so `validate()`
+substitutes "does this file exist on disk now?" for the drift check. That one is *not* gated on
+`requireEditorClosed`: that option opts out of refusing on concurrent edits, not out of refusing
+to destroy a file we never read. It is deliberately not an `updateFile` upsert flag — "create
+Map012.json" and "edit Map012.json" want opposite things to be true of the disk.
 
 ### Assumptions isolated on purpose
 
@@ -171,10 +183,11 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 10 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
-`allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`,
-`playtest`, and `coverage` — omitted here because they front L3.5/L5 (M7/M8), which
-don't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
+plus 15 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
+`create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`,
+`allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists
+`playtest` and `coverage` — omitted here because they front L5 (M8), which
+doesn't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
 decision A (MCP is a thin transport over real logic, not the other way around). `simulate_battle`
 runs against the *in-memory* session, so an agent can ask "did that buff break the boss fight?"
 about an edit it has not committed.
@@ -258,6 +271,67 @@ package should be needed — which is why it is listed here rather than left as 
 The fixture grew for this milestone: `fixtures/minimal-project/data/` gained Classes, Enemies,
 Troops, States, Weapons and Armors (a real MZ project always has them), and Skills 1/2 became
 real Attack/Guard rows because MZ hardcodes those ids in `attackSkillId()`/`guardSkillId()`.
+
+### L3.5 maps (`packages/mapgen`)
+
+Four files, in dependency order:
+
+- `autotile.ts` — the deterministic half of M7 and the only module here with no judgement calls.
+  An MZ tile id ≥ 2048 is `2048 + kind * 48 + shape`: only `kind` is authored, `shape` is a pure
+  function of the eight neighbours, so painting means "write the kind everywhere, then derive every
+  shape". The shape *numbering* is undocumented (risk R9 — a wrong shape is a visibly broken map),
+  so it is derived here from MZ's own `Tilemap.FLOOR_AUTOTILE_TABLE` / `WALL_` / `WATERFALL_`
+  rather than transcribed: reading off which quarter-tile each shape draws gives an enumeration
+  (16 corner combinations, then one/two/three/four open edges) that the code *generates* instead of
+  hardcoding 47 magic numbers. One trap is called out in a comment and pinned by a test — within a
+  single-open-edge group the corners are enumerated cyclically *past* that edge, so the right-open
+  group reads lower-left first and every naive "always start at upper-left" port is off by one
+  there. `autotileFamily()` is the port of `_drawAutotile`'s branches (A3 and A4's upper kinds use
+  the 16-shape wall table, A1's odd upper kinds the 4-shape waterfall one, everything else floor).
+  A test walks all 256 neighbour configurations and asserts the shapes produced are exactly 0–46.
+  The one R1/R9 assumption left is a single `Math.min/max` clamp: out-of-bounds neighbours count as
+  a continuation of the edge tile, so an autotile painted to the map border draws no seam.
+- `edit.ts` — `blankMap` (every field the editor writes, present with its default; an absent field
+  is not "default" to MZ, it is `undefined` reaching code that never nullchecks it), `createMap`,
+  `paintTiles`, `resizeMap`. `createMap` writes `Map###.json` *before* its MapInfos row, since
+  `upsert_database` rightly refuses a row whose map file doesn't exist (M6.5), and allocates an id
+  free on *both* sides — a null MapInfos slot whose `Map###.json` still exists is an orphan, and
+  reusing that id would silently adopt its events. Painting takes a list of rectangles and rejects
+  one that leaves the map: the flat index would otherwise wrap onto the next row (or next layer),
+  so painting past the right edge draws on the left edge one row down. `resizeMap` never moves or
+  deletes events — that is data an agent wrote deliberately — but returns the ids left out of
+  bounds, and re-derives shapes afterwards because *growing* exposes old edge tiles to empty ones.
+- `passage.ts` — `setTileFlags` (per-tile passability, terrain tag, star/ladder/bush/counter/damage
+  over `Tilesets.json`'s 8192-entry `flags`; `upsert_database` can only write that array whole,
+  which no caller can produce by hand without clobbering every other tile) and
+  `analyzeReachability`, a `Game_Map.checkPassage` port flood-filling walkable regions the way a
+  player walks them (a step needs both tiles to agree, so one-way cliff tiles stay one-way).
+  Watch tile id 0: it is not "no tile" to MZ but the first B-sheet tile, and every stock tileset
+  flags it ★ so empty upper layers abstain instead of voting "passable" — a tileset that doesn't
+  reads as passable everywhere, walls included.
+- `compose.ts` — BSP, not the plan's 20–30 hand-drawn prefabs. Prefabs are content authored against
+  a tileset this repo doesn't ship (`fixtures/minimal-project` has no real MZ art), so a prefab
+  drawn against guessed tile ids is worth less than a rectangle drawn against the caller's. BSP
+  also makes the checkable half of the acceptance criterion structural rather than a repair pass:
+  every room is carved inside a leaf and every internal node joins its two children with one
+  L-corridor, so the walkable area is connected by construction. `analyzeReachability` then asserts
+  that against the real passage flags instead of trusting the argument, and `composeMap` throws
+  rather than returning a broken map (nothing is on disk yet, so a caller that rolls back loses
+  nothing). A test generates 20 maps across sizes and seeds and checks each is one region.
+  **Not implemented**, and not silently approximated: the plan's decoration rules (furniture against
+  walls, doorways kept clear) and the "looks hand-made ≥ 70%" half of acceptance — both need a real
+  tileset's B–E tiles to place, and both are judgement, not algorithm.
+
+`upsert_database` gained one table-specific default alongside this (`NEW_ROW_DEFAULTS` in
+`tables.ts`), closing M6.5's review gap #1: an appended Tilesets row now gets the 8192-long `flags`
+array `Game_Map.checkPassage` indexes, instead of crashing the game on the player's first step.
+The list is deliberately near-empty — per-table schemas are the upfront modeling §4.5 says not to
+build, so an entry has to earn its place by naming a crash.
+
+Deliberately out of scope: an "every event is reachable" *validator* rule. `analyzeReachability`
+exports the machinery and `compose_map` uses it, but running it over hand-made maps warns on
+things that are fine (parallel-process events parked at 0,0, decoration events on impassable
+tiles), and a validator that cries wolf gets ignored wholesale.
 
 ### Legacy JS carried over
 

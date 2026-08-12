@@ -22,3 +22,25 @@ export const DATABASE_TABLES: Record<string, string> = {
   animations: 'Animations.json',
   mapInfos: 'MapInfos.json',
 };
+
+/**
+ * Fields a *new* row of a table must have that a shallow merge onto `{}` can't
+ * be expected to supply. Deliberately near-empty: per-table schemas are the
+ * upfront modeling §4.5 says not to build, and every entry here has to earn its
+ * place by naming a crash.
+ *
+ * Tilesets is the one that has (M6.5 review gap #1, scheduled to M7): MZ's
+ * `Game_Map.checkPassage` indexes `tileset().flags[tileId]` for tile ids up to
+ * 8191, so a row appended as `{name, id}` crashes the game on the player's
+ * first step. `tilesetNames` is here for the same reason one step earlier — the
+ * editor can't open a tileset whose nine sheet names are missing.
+ */
+export const NEW_ROW_DEFAULTS: Record<string, () => Record<string, unknown>> = {
+  'Tilesets.json': () => ({
+    name: '',
+    mode: 1,
+    tilesetNames: ['', '', '', '', '', '', '', '', ''],
+    flags: new Array<number>(8192).fill(0),
+    note: '',
+  }),
+};

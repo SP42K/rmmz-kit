@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './io/atomicWrite.js';
 import { parseJson, stringifyCompact } from './io/format.js';
@@ -37,6 +37,8 @@ export class ProjectSession {
     private readonly files: Map<string, unknown>,
     private readonly originalText: Map<string, string>,
     private readonly dirty: Set<string>,
+    /** Subset of `dirty` that has no file on disk yet — rollback deletes these instead of re-parsing. */
+    private readonly created: Set<string>,
     lockSnapshot: EditorLockSnapshot,
     git: GitRepo,
     private readonly options: Required<OpenProjectOptions>
@@ -66,7 +68,7 @@ export class ProjectSession {
 
     const git = new GitRepo(rootPath);
 
-    return new ProjectSession(rootPath, dataDir, files, originalText, new Set(), lockSnapshot, git, {
+    return new ProjectSession(rootPath, dataDir, files, originalText, new Set(), new Set(), lockSnapshot, git, {
       requireEditorClosed: options.requireEditorClosed ?? true,
     });
   }
@@ -87,12 +89,35 @@ export class ProjectSession {
     return this.files.get(name) as T;
   }
 
+  /**
+   * Add a data file the project doesn't have yet (M7's prerequisite for
+   * create_map: `updateFile` throws on a file that isn't there). It joins the
+   * transaction like any other mutation — invisible on disk until commit(),
+   * discarded whole by rollback(). Deliberately not an `updateFile` upsert
+   * flag: "create Map012.json" and "edit Map012.json" have opposite failure
+   * modes (one wants the file absent, the other present), and a caller that
+   * gets it backwards should hear about it, not silently overwrite a map.
+   */
+  createFile(name: string, data: unknown): void {
+    if (this.files.has(name)) {
+      throw new Error(`Data file already exists: ${name}`);
+    }
+    this.files.set(name, data);
+    this.created.add(name);
+    this.dirty.add(name);
+  }
+
   /** Mutate a file's in-memory data. Return a replacement, or mutate in place and return nothing. */
   updateFile<T = unknown>(name: string, updater: (data: T) => T | void): void {
     const current = this.readFile<T>(name);
+    // Marked dirty *before* the updater runs, not after: an updater that mutates
+    // in place and then throws (a multi-entry write that rejects entry N) has
+    // already changed `current`, which is the object in `files`. Marking after
+    // would leave that change untracked — invisible to rollback(), and silently
+    // committed by the next unrelated edit to the same file.
+    this.dirty.add(name);
     const result = updater(current);
     this.files.set(name, result === undefined ? current : result);
-    this.dirty.add(name);
   }
 
   async validate(): Promise<ValidationReport> {
@@ -104,6 +129,22 @@ export class ProjectSession {
         errors.push(
           `File changed on disk since the project was opened (editor open, or another process wrote it?): ${path.relative(this.rootPath, filePath)}`
         );
+      }
+    }
+
+    // A created file was absent at open(), so the mtime snapshot has nothing to
+    // compare and findDrift() can't see it. Its equivalent of drift is "it
+    // exists now" — someone else made that map meanwhile, and committing would
+    // overwrite it. Checked regardless of requireEditorClosed: that option opts
+    // out of refusing on *concurrent edits*, not out of refusing to destroy a
+    // file we never read.
+    for (const name of this.created) {
+      const exists = await stat(path.join(this.dataDir, name)).then(
+        () => true,
+        () => false
+      );
+      if (exists) {
+        errors.push(`File created in this session already exists on disk (another process wrote it?): ${name}`);
       }
     }
 
@@ -121,9 +162,16 @@ export class ProjectSession {
   /** Discard all in-memory mutations since open() (or the last commit). */
   rollback(): void {
     for (const name of this.dirty) {
-      this.files.set(name, parseJson(this.originalText.get(name)!));
+      // A created file has no original text to restore — undoing it means
+      // making the session forget the file exists at all.
+      if (this.created.has(name)) {
+        this.files.delete(name);
+      } else {
+        this.files.set(name, parseJson(this.originalText.get(name)!));
+      }
     }
     this.dirty.clear();
+    this.created.clear();
   }
 
   /**
@@ -162,6 +210,7 @@ export class ProjectSession {
       for (const [name, text] of written) {
         this.originalText.set(name, text);
         this.dirty.delete(name);
+        this.created.delete(name);
       }
       this.lockSnapshot = await EditorLockSnapshot.capture(
         this.listFiles().map((name) => path.join(this.dataDir, name))

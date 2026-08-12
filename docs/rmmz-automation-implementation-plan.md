@@ -318,9 +318,9 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 
 | # | 缺口 | 代價 | 排程 |
 |---|---|---|---|
-| 1 | `tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆。目前只有「合併進既有列」這條路徑是安全的（也只有它有測試） | 中 | **M7**。tileset 本來就是地圖能力的一部分，新增 tileset 應與 `compose_map` 同批處理（給預設 flags 或走真正的建構工具）。在此之前補 per-table schema 正是 §4.5 說不要提前做的建模 |
+| 1 | ~~`tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆~~ | 中 | **M7 已修**：`tables.ts` 的 `NEW_ROW_DEFAULTS` 只在「這個 id 還沒有列」時補上 `flags` / `tilesetNames` / `mode`，不碰既有列。清單刻意保持接近空的——per-table schema 仍是 §4.5 說不要提前做的建模，要進這張表得先講得出它擋掉哪一種 crash |
 | 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事 |
-| 3 | `upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入 | 中 | 先修的一版（複製 `[...data]` 再寫回）會壞掉 `allocEntityId`——它讀的是 session 的即時陣列，多筆連續 append 靠這個拿到遞增 id。需要 allocator 與 updateFile 一起處理，歸到與 #2 同一批 |
+| 3 | ~~`upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入~~ | 中 | **已於 M7 修掉**：`updateFile` 改成先 `dirty.add()` 再跑 updater。這比當初設想的「複製 `[...data]` 再寫回」小得多，也不動 `allocEntityId` 讀 session 即時陣列的行為；代價只是 updater 尚未 mutate 就 throw 時多寫一次位元組相同的檔案 |
 
 ---
 
@@ -347,6 +347,37 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 
 **驗收**：新建一張地圖、畫房間、設通行度，編輯器開啟顯示正確（autotile 接縫正確，見 §6
 R9）；生成 20 張地圖，100% 連通且所有事件可達；人工評分「看起來像人做的」≥ 70%。
+
+**實作結果**：`packages/mapgen`（`autotile.ts` / `edit.ts` / `passage.ts` / `compose.ts`）＋
+core 的 `ProjectSession.createFile()` ＋ MCP 的 `create_map` / `resize_map` / `paint_tiles` /
+`set_tile_flags` / `compose_map`。M6.5 缺口 #1（新增 tileset 列沒有 8192 長 `flags`）順手在此
+關掉，改由 `tables.ts` 的 `NEW_ROW_DEFAULTS` 供給。
+
+autotile shape 編號沒有 spec，實作方式是**從 MZ 自己的 `Tilemap.FLOOR_AUTOTILE_TABLE` 反推**
+（每個 shape 畫哪四個 1/4 圖塊 → 哪幾邊是邊界），得到「16 種凹角組合 → 一/二/三/四邊開放」
+的枚舉規則，由程式生成而非硬寫 47 個魔術數字。有一個坑值得記：單邊開放組的角是**從該邊順
+時針往後**繞著數的，所以「右邊開放」那組是先左下再左上——照直覺永遠從左上開始的移植會在這
+一組錯位。測試窮舉 256 種鄰居組合，斷言產出恰為 0–46。
+
+**未做（刻意，非遺漏）**：
+
+| 缺口 | 為什麼 | 排程 |
+|---|---|---|
+| 20–30 個手作 prefab，改用 BSP | prefab 是對著某套 tileset 畫的內容，本 repo 沒有 MZ 素材（`fixtures/minimal-project` 是手寫的），對著猜的 tile id 畫出來的 prefab 價值低於對著呼叫端 tileset 畫的矩形。BSP 另外把「連通」變成建構保證而非修補 pass | 有真實素材專案時再評估 |
+| 裝飾規則 ・「看起來像人做的」≥ 70% | 同上，要有真 tileset 的 B–E 圖塊可放；且這是評分不是演算法 | 同上 |
+| validator 的「所有事件可達」規則 | `analyzeReachability()` 已在 `mapgen` 匯出、`compose_map` 也用它斷言，但套到手作地圖上會對正常東西發警告（停在 0,0 的並列處理事件、放在不可通行格上的裝飾事件），會叫的 validator 沒人理 | 有真實專案的誤報率數據再說 |
+| autotile 越界鄰居的處理 | 目前 clamp（視為邊緣格延伸，所以畫到地圖邊緣不生接縫），這是 R1/R9 級假設，全部集中在 `tileAt` 的一個 clamp | 對照編輯器實際輸出後一行可改 |
+
+**已知缺口（實作後 code review 找出，刻意不在 M7 修）**：五項 finding 中三項已在本里程碑修掉
+（`paintMapData` 改成全部 op 驗完再畫；`updateFile` 改成先標 dirty 再跑 updater——這順帶關掉
+上面 M6.5 缺口 #3，且避開了那條註記說會壞掉 `allocEntityId` 的「複製再寫回」修法；
+`analyzeReachability` 的「無區域」哨兵改用 `NaN`，原本的 `-1` 與未走訪格同值，整張地圖不可進入
+時反而回報所有事件都可達）。剩兩項：
+
+| # | 缺口 | 代價 | 排程 |
+|---|---|---|---|
+| 1 | `composeMap` 的連通性 throw 發生在 `createMap` 已寫入 `Map###.json` ＋ MapInfos 列、`ensureFlags` 已改掉 97 筆 tileset flag *之後*；這些改動留在 session 裡，呼叫端若沒整批 rollback 就會 commit 出一張不連通的地圖。觸發路徑：`setFlags: false` 配上一套沒把地板設成可通行的 tileset | 低（要非預設參數才踩得到；且 throw 本身有講清楚） | 需要把 `analyzeReachability` 改成能吃脫離 session 的 `MapData`（現在它從 session 讀 map 與 tileset），才能在建檔前先驗。等哪天有第二個呼叫端需要「先驗再落地」時一起做 |
+| 2 | `resizeMap` 事後重算 shape 是掃**整張**地圖的 layer 0–1，不是只掃放大後新暴露的邊帶：會蓋掉呼叫端刻意用 `autotile: false` 寫的 tile，也會在本模組 R9 推導與 MZ 實際輸出不一致處重畫編輯器做的地圖 | 低 | 目前這個全圖 pass 是刻意的（縮小也可能讓內部格變成邊緣格）。等上面 autotile clamp 那條對照過真實編輯器輸出、確認推導無誤後，再決定要不要縮成邊帶 |
 
 ---
 
@@ -636,8 +667,10 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 - `upsert_database(table, entries)` — 走 schema 驗證，shallow merge 到既有列或
   `IdAllocator` 配新 ID
 - `update_system(patch)` — **M6.5**：System.json 是單一 object，走 shallow merge 而非列模型
-- `create_map(spec)` / `resize_map(...)` / `paint_tiles(...)` — **M7**：地圖生命週期與繪製原語
-- `compose_map(spec)` — **M7** 後半，走 L3.5，目前不存在
+- `create_map(spec)` / `resize_map(...)` / `paint_tiles(...)` — **M7 已交付**：地圖生命週期與繪製原語
+- `set_tile_flags(tilesetId, tiles)` — **M7 已交付**，§4.5 規劃時漏列：逐格通行度／地形標籤。
+  `upsert_database` 只能整包換掉 8192 長的 `flags`，呼叫端手寫不出來也不該手寫
+- `compose_map(spec)` — **M7 已交付**，走 L3.5（BSP，非 prefab 拼接，理由見 M7 實作結果）
 - `manage_plugins(...)` — **M7.6**：js/plugins.js 條目的讀寫/啟停
 - `import_asset(...)` — **M7.6**：複製素材進 img/、audio/ 正確子目錄
 - `allocate_namespace(name, counts)`

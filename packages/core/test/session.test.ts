@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { utimes, readFile } from 'node:fs/promises';
+import { utimes, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { openProject } from '../src/session.js';
 import { makeTestProject } from './testProject.js';
@@ -178,5 +178,54 @@ describe('ProjectSession', () => {
     expect(await second.commit('feat: no actual change')).toBeNull();
     // ...and the session is still usable afterwards.
     expect((await second.validate()).errors).toEqual([]);
+  });
+
+  it('createFile joins the transaction: readable at once, on disk and in git only after commit', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    session.createFile('Map002.json', { width: 5 });
+
+    expect(session.listFiles()).toContain('Map002.json');
+    expect(session.dirtyFiles()).toEqual(['Map002.json']);
+    await expect(readFile(path.join(dir, 'data', 'Map002.json'), 'utf-8')).rejects.toThrow();
+
+    expect(await session.commit('feat: add map')).not.toBeNull();
+    expect(JSON.parse(await readFile(path.join(dir, 'data', 'Map002.json'), 'utf-8'))).toEqual({ width: 5 });
+    const { stdout } = await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: dir });
+    expect(stdout).toContain('data/Map002.json');
+    // The commit's own write must not read back as external drift.
+    expect((await session.validate()).errors).toEqual([]);
+  });
+
+  it('createFile refuses a file the session already has, and rollback forgets one it made', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    expect(() => session.createFile('System.json', {})).toThrow(/already exists/);
+
+    session.createFile('Map002.json', { width: 5 });
+    session.rollback();
+    expect(session.listFiles()).not.toContain('Map002.json');
+    expect(session.dirtyFiles()).toEqual([]);
+    // ...and the name is free to create again, not stuck in the created set.
+    expect(() => session.createFile('Map002.json', { width: 9 })).not.toThrow();
+  });
+
+  it('refuses to commit a created file that appeared on disk meanwhile', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    session.createFile('Map002.json', { width: 5 });
+    // Another process (the editor) makes the same map first. The mtime snapshot
+    // can't see this — the file didn't exist to be snapshotted — so it is the
+    // created-set check or nothing.
+    await writeFile(path.join(dir, 'data', 'Map002.json'), '{"width":99}');
+
+    await expect(session.commit('feat: add map')).rejects.toThrow(/already exists on disk/);
+    expect(JSON.parse(await readFile(path.join(dir, 'data', 'Map002.json'), 'utf-8'))).toEqual({ width: 99 });
   });
 });
