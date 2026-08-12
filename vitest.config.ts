@@ -1,6 +1,12 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // Workspace packages now carry `exports` maps whose default points at dist
+  // (so the compiled `rmmz-mcp` bin can run under plain Node — issue #7);
+  // this condition keeps tests resolving the TypeScript sources, build-free.
+  resolve: {
+    conditions: ['rmmz-kit-source'],
+  },
   test: {
     include: ['packages/*/test/**/*.test.ts'],
     // Nearly every test copies fixtures/minimal-project and `git init`s it,

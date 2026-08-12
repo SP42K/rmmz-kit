@@ -599,11 +599,11 @@ Lv10（長篇商業 RPG 全自動）**刻意不在本計畫範圍內**，理由�
 
 M0–M6 已完成（見 `CLAUDE.md` status）。§8 原本的「起手三步」已全部達成，改列目前真正的下一步：
 
-1. **決定 issue #7**：`rmmz-mcp` bin 目前無法啟動（workspace `main` 指向 TypeScript
-   原始碼，編譯後的 `dist/bin.js` 解不到 `@rmmz-kit/core`）。`CLAUDE.md` 把這標成
-   「M6 前要決定」，M6 不依賴它所以先做了，但這條擋著「真的能被 Claude Desktop 接上」；
-   解法是五個套件都加 `exports` map + 自訂 condition，外加 `tsconfig.base.json` 的
-   `customConditions`。
+1. ~~**決定 issue #7**~~：已解決 — 五個套件都加了 `exports` map（`rmmz-kit-source`
+   自訂 condition 指向 TS 原始碼，`default` 指向 `dist/`），外加 `tsconfig.base.json`
+   的 `customConditions` 與 `vitest.config.ts` 的 `resolve.conditions`。
+   `npm run build` 後 `node packages/mcp/dist/bin.js <project>` 可直接被
+   Claude Desktop 這類 stdio client 接上。
 2. **M7 地圖合成**或 **M8 headless 測試框架**：M6 已驗證「靜態鏈 + 動態驗證」有價值，
    照 §6 R2 的建議，M8 投入前先確認 timebox。
 3. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。
