@@ -25,7 +25,7 @@ describe('checkReferences', () => {
     cleanups.push(cleanup);
     const session = await openProject(dir);
     session.updateFile<MapData>('Map001.json', (data) => {
-      const list = [{ code: 126, indent: 0, parameters: [999, 0, 0, 0, 1] }];
+      const list = [{ code: 126, indent: 0, parameters: [999, 0, 0, 1] }];
       data.events.push(mapEvent(2, 'Broken', [page(list, { conditions: blankConditions({ itemValid: true, itemId: 1 }) })]));
     });
     const findings = await checkReferences(session);

@@ -111,12 +111,17 @@ export function walkNodes(nodes: Node[], visit: (node: Node, guards: Guards) => 
         for (const branch of node.branches) walkNodes(branch, visit, guards);
         if (node.cancelBranch) walkNodes(node.cancelBranch, visit, guards);
         break;
+      case 'battle':
+        for (const branch of [node.win, node.escape, node.lose]) {
+          if (branch) walkNodes(branch, visit, guards);
+        }
+        break;
       case 'raw':
-        // An unmodeled structural command (Battle Processing's 301/601/... —
-        // see RawNode.body) still nests real commands under it. Skipping them
-        // would make every rule blind inside an If Win/If Lose branch. Guards
-        // pass through unchanged: an enclosing "gold >=" check still holds
-        // inside the branch, and the raw command itself guards nothing we model.
+        // An unmodeled structural command (see RawNode.body) still nests real
+        // commands under it. Skipping them would make every rule blind inside
+        // such a branch. Guards pass through unchanged: an enclosing "gold >="
+        // check still holds inside the branch, and the raw command itself
+        // guards nothing we model.
         if (node.body) walkNodes(node.body, visit, guards);
         break;
     }

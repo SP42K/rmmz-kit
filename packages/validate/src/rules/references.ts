@@ -118,12 +118,20 @@ async function checkAssets(session: ProjectSession, findings: Finding[]): Promis
   // one lands. Extensions are stripped once per directory, not once per
   // reference, for the same reason.
   const dirCache = new Map<string, Promise<string[] | null>>();
+  // Assets imported in this session are staged, not on disk, until commit()
+  // writes them alongside the rows referencing them (M7.6). Ignoring them would
+  // make validate report every fresh import as a broken reference — and since
+  // an agent is meant to run validate *before* deciding to commit, that is the
+  // one moment the warning is guaranteed wrong.
+  const staged = session.rawWriteFiles();
   function listDir(rel: string): Promise<string[] | null> {
     let pending = dirCache.get(rel);
     if (!pending) {
+      const pendingNames = staged.filter((file) => file.startsWith(`${rel}/`)).map((file) => file.slice(rel.length + 1));
       pending = readdir(path.join(session.rootPath, rel))
-        .then((entries) => entries.map((f) => f.replace(/\.[^./]+$/, '')))
-        .catch(() => null);
+        .then((entries) => [...entries, ...pendingNames])
+        .catch(() => (pendingNames.length > 0 ? pendingNames : null))
+        .then((entries) => entries && entries.map((f) => f.replace(/\.[^./]+$/, '')));
       dirCache.set(rel, pending);
     }
     return pending;

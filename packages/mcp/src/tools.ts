@@ -9,7 +9,7 @@ import type {
   CommonEvent,
 } from '@rmmz-kit/core';
 import { IdAllocator, mapFileName } from '@rmmz-kit/core';
-import { compile, parseDsl } from '@rmmz-kit/compiler';
+import { buildMoveRoute, compile, moveStep, parseDsl, type MoveStepSpec } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
 import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesim';
 import {
@@ -25,6 +25,7 @@ import {
   type ResizeResult,
   type TileFlagSpec,
 } from '@rmmz-kit/mapgen';
+import { formatPluginsJs, parsePluginsJs, PLUGINS_FILE, type PluginEntry } from './plugins.js';
 import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 /**
@@ -101,6 +102,13 @@ export interface PageSpec {
   moveType?: number;
   moveSpeed?: number;
   moveFrequency?: number;
+  /**
+   * The page's autonomous route, used when `moveType` is 3 (custom). Steps take
+   * the same shape as the DSL's `moveRoute` command — MOVE_ROUTE_CODES names or
+   * raw codes — and the ROUTE_END terminator is appended for you (M7.5).
+   * Omitted, a page gets MZ's default empty route.
+   */
+  moveRoute?: { route: MoveStepSpec[]; repeat?: boolean; skippable?: boolean; wait?: boolean };
   priorityType?: number;
   through?: boolean;
   walkAnime?: boolean;
@@ -131,7 +139,14 @@ function buildPage(spec: PageSpec, list: EventCommand[] | undefined): EventPage 
     image: mergeKnown(DEFAULT_IMAGE, spec.image, 'page image'),
     list: list ?? compile([]),
     moveFrequency: spec.moveFrequency ?? 3,
-    moveRoute: { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
+    moveRoute: spec.moveRoute
+      ? buildMoveRoute({
+          route: spec.moveRoute.route.map(moveStep),
+          repeat: spec.moveRoute.repeat ?? true,
+          skippable: spec.moveRoute.skippable ?? false,
+          wait: spec.moveRoute.wait ?? false,
+        })
+      : { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false },
     moveSpeed: spec.moveSpeed ?? 3,
     moveType: spec.moveType ?? 0,
     priorityType: spec.priorityType ?? 1,
@@ -289,6 +304,45 @@ export function setTileFlagsTool(session: ProjectSession, tilesetId: number, til
 export function composeMapTool(session: ProjectSession, spec: ComposeSpec): ComposeResult {
   return composeMap(session, spec);
 }
+
+/**
+ * `manage_plugins` (plan §4.5, M7.6): read js/plugins.js, and optionally
+ * shallow-merge entries into it by name (new names append, so load order is
+ * append-order — reordering an existing list isn't exposed because nothing has
+ * needed it yet). Always returns the resulting list, so the read-only call is
+ * just this one with no patch.
+ *
+ * The write is staged on the session like a data file: it lands on commit() and
+ * vanishes on rollback(), together with whatever database rows referenced the
+ * plugin.
+ */
+export async function managePlugins(session: ProjectSession, patches?: PluginPatch[]): Promise<PluginEntry[]> {
+  const text = await session.readRaw(PLUGINS_FILE);
+  const { header, entries } = text === null ? { header: undefined, entries: [] as PluginEntry[] } : parsePluginsJs(text);
+  if (!patches || patches.length === 0) return entries;
+
+  for (const patch of patches) {
+    // A plugin listed with no js/plugins/<name>.js is a hard crash on boot
+    // (PluginManager.loadScript's onerror throws), and it is the single most
+    // likely mistake here: the name is a filename an agent typed from memory.
+    if ((await session.readRaw(`js/plugins/${patch.name}.js`)) === null) {
+      throw new Error(`No such plugin: js/plugins/${patch.name}.js. Import the plugin file before enabling it.`);
+    }
+    const existing = entries.find((entry) => entry.name === patch.name);
+    if (existing) {
+      Object.assign(existing, patch);
+    } else {
+      entries.push({ status: true, description: '', parameters: {}, ...patch });
+    }
+  }
+
+  session.writeRaw(PLUGINS_FILE, formatPluginsJs(entries, header));
+  return entries;
+}
+
+export type PluginPatch = Partial<PluginEntry> & { name: string };
+
+export { importAsset } from './assets.js';
 
 export function allocateNamespace(
   session: ProjectSession,

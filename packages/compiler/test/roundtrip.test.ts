@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compile } from '../src/emit.js';
 import { decompile } from '../src/decompile.js';
-import type { Condition, Node } from '../src/ir.js';
+import { SIMPLE_COMMANDS, type Condition, type Node, type SimpleKind } from '../src/ir.js';
 
 /**
  * Deterministic PRNG (mulberry32) so a failing seed is reproducible from the
@@ -18,7 +18,21 @@ function mulberry32(seed: number) {
   };
 }
 
-const RAW_CODES = [124, 125, 132, 133, 205, 212, 213, 221, 222, 241, 242, 301, 302, 311, 355, 356];
+/** Codes with no typed node: Tier 3 (231/232/235/261/281/331/332) and MV's text plugin command (356). */
+const RAW_CODES = [124, 132, 133, 231, 232, 235, 261, 281, 331, 332, 356];
+
+const SIMPLE_KINDS_UNDER_TEST = Object.keys(SIMPLE_COMMANDS) as SimpleKind[];
+
+/** A node for a flat-parameter Tier 2 command, with every field given a value of the right type. */
+function randomSimpleNode(rng: () => number): Node {
+  const kind = pick(rng, SIMPLE_KINDS_UNDER_TEST);
+  const node: Record<string, unknown> = { kind };
+  for (const [name, value] of Object.entries(SIMPLE_COMMANDS[kind].fields as Record<string, unknown>)) {
+    node[name] =
+      typeof value === 'number' ? Math.floor(rng() * 20) : typeof value === 'string' ? `v${Math.floor(rng() * 100)}` : rng() < 0.5;
+  }
+  return node as unknown as Node;
+}
 
 function randomNode(rng: () => number, depth: number): Node {
   const pool: Array<() => Node> = [
@@ -62,6 +76,47 @@ function randomNode(rng: () => number, depth: number): Node {
       pitch: Math.floor(rng() * 100) + 50,
       pan: Math.floor(rng() * 20) - 10,
     }),
+    () => ({
+      kind: 'playBgm',
+      name: pick(rng, ['Town1', 'Battle1']),
+      volume: Math.floor(rng() * 100),
+      pitch: Math.floor(rng() * 100) + 50,
+      pan: 0,
+    }),
+    () => randomSimpleNode(rng),
+    () => ({
+      kind: 'moveRoute',
+      characterId: pick(rng, [-1, 0, 1, 2]),
+      repeat: rng() < 0.5,
+      skippable: rng() < 0.5,
+      wait: rng() < 0.5,
+      route: Array.from({ length: Math.floor(rng() * 4) }, () =>
+        rng() < 0.7
+          ? { code: 1 + Math.floor(rng() * 13) }
+          : { code: 45, parameters: [`this.setOpacity(${Math.floor(rng() * 255)})`] }
+      ),
+    }),
+    () => ({
+      kind: 'shop',
+      goods: Array.from({ length: 1 + Math.floor(rng() * 3) }, () => ({
+        type: Math.floor(rng() * 3),
+        id: 1 + Math.floor(rng() * 10),
+        priceType: Math.floor(rng() * 2),
+        price: Math.floor(rng() * 500),
+      })),
+      purchaseOnly: rng() < 0.5,
+    }),
+    () => ({
+      kind: 'script',
+      lines: Array.from({ length: 1 + Math.floor(rng() * 3) }, () => `$gameSwitches.setValue(${Math.floor(rng() * 20)}, true);`),
+    }),
+    () => ({
+      kind: 'pluginCommand',
+      plugin: pick(rng, ['TextPicture', 'AltMenuScreen']),
+      command: pick(rng, ['set', 'clear']),
+      label: rng() < 0.5 ? undefined : 'Custom Label',
+      args: rng() < 0.5 ? {} : { text: `hello ${Math.floor(rng() * 100)}` },
+    }),
   ];
 
   if (depth > 0) {
@@ -86,12 +141,23 @@ function randomNode(rng: () => number, depth: number): Node {
         };
       },
       () => ({ kind: 'loop', body: randomList(rng, depth - 1) }),
-      // An unmodeled structural command with an indented body — Battle
-      // Processing's 601/603 being the real-world shape. Only ever attached
-      // non-empty: `body: []` and no body compile to the same command list.
+      () => ({
+        kind: 'battle',
+        designation: Math.floor(rng() * 3),
+        troopId: 1 + Math.floor(rng() * 5),
+        canEscape: rng() < 0.5,
+        canLose: rng() < 0.5,
+        // Each branch is independently present-or-absent, the same distinction
+        // IfNode.else makes: no 60x row at all vs. a 60x with an empty body.
+        win: rng() < 0.7 ? randomList(rng, depth - 1) : undefined,
+        escape: rng() < 0.4 ? randomList(rng, depth - 1) : undefined,
+        lose: rng() < 0.4 ? randomList(rng, depth - 1) : undefined,
+      }),
+      // An unmodeled structural command with an indented body. Only ever
+      // attached non-empty: `body: []` and no body compile to the same list.
       () => {
         const body = randomList(rng, depth - 1);
-        const raw: Node = { kind: 'raw', code: pick(rng, [601, 602, 603]), parameters: [] };
+        const raw: Node = { kind: 'raw', code: pick(rng, [900, 901, 902]), parameters: [] };
         return body.length > 0 ? { ...raw, body } : raw;
       }
     );

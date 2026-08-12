@@ -167,10 +167,14 @@ function checkNegativeResources(session: ProjectSession, findings: Finding[]): v
     const nodes = tryDecompile(ctx.list);
     if (!nodes) return;
     walkNodes(nodes, (node, guards) => {
-      if (node.kind !== 'raw') return;
-      if (node.code === 125) {
-        const [operation] = node.parameters as number[];
-        if (operation === 1 && !guards.gold) {
+      // operation 1 = decrease, for either operand type: with operandType 1 the
+      // amount is a variable, and "spend an unknown amount with no possession
+      // check" is if anything the more suspicious of the two. What this rule
+      // can't judge either way is whether a *present* guard covers the amount —
+      // it has no value analysis — which is why it only looks for the guard's
+      // existence.
+      if (node.kind === 'gainGold') {
+        if (node.operation === 1 && !guards.gold) {
           findings.push({
             rule: 'semantics/possible-negative-gold',
             severity: 'warning',
@@ -180,13 +184,12 @@ function checkNegativeResources(session: ProjectSession, findings: Finding[]): v
           });
         }
       }
-      if (node.code === 126) {
-        const [itemId, operation] = node.parameters as number[];
-        if (operation === 1 && !guards.items.has(itemId)) {
+      if (node.kind === 'gainItem') {
+        if (node.operation === 1 && !guards.items.has(node.itemId)) {
           findings.push({
             rule: 'semantics/possible-negative-item',
             severity: 'warning',
-            message: `Change Items decreases item ${itemId} with no enclosing "has item" check`,
+            message: `Change Items decreases item ${node.itemId} with no enclosing "has item" check`,
             file: ctx.file,
             path: ctx.path,
           });

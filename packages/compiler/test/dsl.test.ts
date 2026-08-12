@@ -89,7 +89,7 @@ describe('DSL (YAML)', () => {
   });
 
   it('the raw escape hatch passes through an unmodeled command untouched', () => {
-    const nodes = parseDsl('- raw: { code: 357, parameters: ["MyPlugin", "cmd", {}] }');
-    expect(compile(nodes)[0]).toEqual({ code: 357, indent: 0, parameters: ['MyPlugin', 'cmd', {}] });
+    const nodes = parseDsl('- raw: { code: 231, parameters: [1, "Cloud", 0, 0] }');
+    expect(compile(nodes)[0]).toEqual({ code: 231, indent: 0, parameters: [1, 'Cloud', 0, 0] });
   });
 });

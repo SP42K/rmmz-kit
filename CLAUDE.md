@@ -23,8 +23,10 @@ reference-integrity, and semantic/graph rules — see below). M5 / L3 done
 (`packages/battlesim`: headless battle simulator — see below). M6.5 done
 (Tilesets/Animations/MapInfos in `upsert_database`, plus `update_system`). M7 /
 L3.5 done (`packages/mapgen`: autotiles, map lifecycle, paint/passage
-primitives, BSP composition — see below). L2 Tier 2/3 (M7.5) and everything
-from M7.6 onward not started.
+primitives, BSP composition — see below). M7.5 done (L2 Tier 2: the remaining
+§4.3 command groups, plus `PageSpec.moveRoute` — see below). M7.6 done
+(`manage_plugins`, `import_asset`, and the staged non-data writes in core they
+sit on — see below). L2 Tier 3 and everything from M8 onward not started.
 
 ## Commands
 
@@ -73,6 +75,18 @@ validation belongs in `validate()`, not in `commit()`'s write loop.
 
 Only dirty files are written. `updateFile()` marks dirty; `readFile()` must not.
 
+`writeRaw()`/`readRaw()` (M7.6) are the same transaction for the project files that aren't
+`data/*.json`: `js/plugins.js` and imported `img/`/`audio/` assets. They stage bytes keyed by a
+root-relative path, `commit()` writes and git-adds them after the data files, `rollback()` drops
+them. They are deliberately *not* modeled as data files — not JSON, no id-indexed structure, and
+an asset is megabytes we have no reason to parse — but they must join the transaction at its two
+ends, or an agent that imports an asset and then hits a validation error is left with the asset
+already on disk. The path is a trust boundary (it comes from an MCP client and the whole point is
+writing outside `data/`), so `resolveRawPath` rejects anything absolute or escaping the root.
+Two rules elsewhere consult `rawWriteFiles()` so a staged import is visible before it lands:
+`rmmz://asset-catalog` and `validate`'s asset-existence check — an agent is meant to validate
+*before* deciding to commit, which is exactly when "that file doesn't exist" is guaranteed wrong.
+
 `createFile()` (M7, the prerequisite for `create_map`) adds a file the project doesn't have. It
 joins the same transaction — invisible on disk until `commit()`, dropped whole by `rollback()` —
 but tracks its names in a separate `created` set, because the two ends differ: rollback has no
@@ -119,6 +133,29 @@ event as text). The DSL addresses switches/variables by raw numeric id —
 the plan's namespaced expression sugar (`quest.herb.started`) is a
 `IdAllocator`-aware layer that would sit on top of this and is not built yet.
 
+**Tier 2 (M7.5)** adds the rest of §4.3's list. Most of it — 22 command groups
+whose whole payload is a flat positional parameter list (gold/item/weapon/armor,
+party, actor HP/MP/state/EXP/level/param/skill, labels and jumps, fades,
+animation, balloon, break/exit) — is one table, `SIMPLE_COMMANDS` in `ir.ts`:
+node types, emit, decompile, the Zod schema, parse and print are all *derived*
+from it. Hand-writing them would have been ~600 lines encoding one fact (the
+parameter order `Game_Interpreter` reads) in six places that can disagree; the
+table encodes it once, and the type-level derivation (`SimpleNode`,
+`SimpleFields`) is the price of not having a second, hand-maintained copy of it
+in the DSL types. Anything with real structure stays hand-written: movement
+routes (205 plus its 505 mirror rows), Battle Processing (301 with typed
+win/escape/lose branches, so `walkNodes` in the validator sees inside them),
+Shop Processing (302 + 605), Script (355 + 655) and MZ's structured Plugin
+Command (357). Two details worth knowing:
+- A flat command only decompiles to its typed node when the data actually has
+  that shape — no extra trailing parameters, no type disagreement with the
+  table. Anything else stays a `RawNode`, because the fallback's whole promise
+  is that nothing is lost and a silently dropped tail is a loss.
+- `MOVE_ROUTE_CODES` names all 46 `Game_Character.ROUTE_*` codes so the DSL
+  reads `moveLeft`, not `code: 2` — the same reasoning §4.5 gives for the asset
+  catalog. `buildMoveRoute` is exported because `upsert_map_event` writes a
+  page's *autonomous* route and must produce the identical object.
+
 Two R1-class assumptions specific to this package (undocumented MZ format,
 see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
 - Every Show Choices branch (402/403 body) always emits a trailing
@@ -138,9 +175,10 @@ see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
 returns a flat `Finding[]` (`rule`, `severity`, `message`, `file`, `path?`) — no report class,
 callers filter by `severity`/`rule` themselves:
 - `rules/structure.ts` — reuses `@rmmz-kit/compiler`'s `decompile()` as the structural check
-  (it already throws on every 111/412, 112/413, 102/402/403/404 pairing or indent mistake) instead
-  of re-deriving bracket-matching; adds only what `decompile()` deliberately doesn't catch (an
-  orphan 401/408 continuation, a 113 Break Loop outside any 112 Loop).
+  (it already throws on every 111/412, 112/413, 102/402/403/404, 301/604 pairing or indent
+  mistake) instead of re-deriving bracket-matching; adds only what `decompile()` deliberately
+  doesn't catch (an orphan continuation — 401/408, and since M7.5 505/605/655 — and a 113 Break
+  Loop outside any 112 Loop).
 - `rules/references.ts` — dangling item/actor/commonEvent/map ids (via `RefIndex.entries()`,
   a small addition to core alongside making `ProjectSession.rootPath` public — both added because
   this package needed them), transfer-destination bounds, and face/character/SE asset existence
@@ -160,7 +198,8 @@ while threading Conditional-Branch guards (gold/item) through `if.then` — seve
 this instead of re-scanning raw command arrays.
 
 Deliberately out of scope, not silently approximated: dangling weapon/armor/skill/state/troop/class
-ids (would need Tier 2/3 command support this repo doesn't have yet) and a generic softlock/quest-
+ids (M7.5's Tier 2 nodes now carry those ids, so the blocker is gone — but adding the rules is M4
+work nobody has scheduled, not part of shipping the compiler) and a generic softlock/quest-
 graph reachability engine (the plan's own namespaced-switch sugar isn't built, so "quest graph"
 has no formal node/edge model to check against — see each rule file's doc comment for exactly
 what's covered instead).
@@ -183,9 +222,10 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 15 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
-`create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`,
-`allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists
+plus 17 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
+`create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`, `manage_plugins`,
+`import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`,
+`rollback`). §4.5 also lists
 `playtest` and `coverage` — omitted here because they front L5 (M8), which
 doesn't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
 decision A (MCP is a thin transport over real logic, not the other way around). `simulate_battle`
@@ -206,8 +246,27 @@ ahead of need. M6.5 added Tilesets/Animations/MapInfos to that list — flat id-
 they cost one line each in `tables.ts` — with one guard: MapInfos rows may only be *edited*, never
 appended, because a row with no `Map###.json` is a map the game 404s on *and* is what
 `validate`'s `references/dangling-map` rule treats as proof the map exists (creating the file is
-`compose_map`'s job, M7). Plus `update_system` for the one database file that isn't
+`compose_map`'s job, M7).
+
+`manage_plugins` and `import_asset` (M7.6) are the two tools that write outside `data/`, both over
+core's `writeRaw` staging. `plugins.ts` isolates the `js/plugins.js` format the way `io/format.ts`
+isolates the data one (risk R1): read is `JSON.parse` over the `var $plugins = [...]` array literal
+— the editor writes strict JSON there, and a file hand-edited into something `JSON.parse` rejects
+is one this tool should refuse to rewrite rather than guess at — and write regenerates it one
+compact entry per line, preserving whatever header the project shipped with. Patching an entry
+first checks `js/plugins/<name>.js` exists, because the name is a filename an agent typed from
+memory and MZ turns a missing one into a crash on boot. `assets.ts` holds `ASSET_DIRS` (shared with
+the asset-catalog resource, so an import can't invent a folder any more than a reference can invent
+a filename) and rejects an extension MZ won't load — `ImageManager` appends `.png` and
+`AudioManager` tries `.ogg`/`.m4a` themselves, so a `.jpg` character sheet is not a warning, it is
+a sprite that silently never appears. Not implemented: reordering the plugin list (load order is
+append order) and removing entries — `status: false` is what "停用" means, and neither has had a
+caller.
+
+Plus `update_system` for the one database file that isn't
 a table: System.json is a single object, shallow-merged (nested fields like `terms` replaced whole).
+`upsert_map_event`'s `PageSpec` gained `moveRoute` in M7.5 (it used to hardcode MZ's empty
+default), taking the same named steps as the DSL via the compiler's `moveStep`/`buildMoveRoute`.
 `update_system` deliberately does *not* reject unknown patch keys the way `upsert_map_event` does,
 because core's `SystemData` is a known subset of what MZ writes (`advanced`, `itemCategories`,
 `optAutosave`, …) and an allowlist would reject real fields; it returns `newFields` instead, so a

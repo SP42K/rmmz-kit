@@ -1,6 +1,9 @@
 import { stringify } from 'yaml';
-import type { Condition, Node } from '../ir.js';
-import { IfPayload, SayPayload, Step } from './schema.js';
+import { MOVE_ROUTE_CODES, SIMPLE_COMMANDS, type Condition, type MoveStep, type Node } from '../ir.js';
+import { IfPayload, MoveStepSpec, SayPayload, Step } from './schema.js';
+
+/** Reverse of MOVE_ROUTE_CODES, so a printed route reads `moveLeft` rather than `2`. */
+const ROUTE_NAMES = new Map<number, string>(Object.entries(MOVE_ROUTE_CODES).map(([name, code]) => [code, name]));
 
 /** Inverse of parse.ts: turns decompiled IR back into the YAML DSL, so an LLM can read an existing event (plan §3 M3). */
 export function printDsl(nodes: Node[]): string {
@@ -82,7 +85,60 @@ function nodeToStep(node: Node): Step {
 
     case 'playSe':
       return { playSe: { name: node.name, volume: node.volume, pitch: node.pitch, pan: node.pan } };
+
+    case 'playBgm':
+      return { playBgm: { name: node.name, volume: node.volume, pitch: node.pitch, pan: node.pan } };
+
+    case 'moveRoute':
+      return {
+        moveRoute: {
+          characterId: node.characterId,
+          repeat: node.repeat,
+          skippable: node.skippable,
+          wait: node.wait,
+          route: node.route.map(routeStepToSpec),
+        },
+      };
+
+    case 'battle':
+      return {
+        battle: {
+          designation: node.designation,
+          troopId: node.troopId,
+          canEscape: node.canEscape,
+          canLose: node.canLose,
+          win: node.win?.map(nodeToStep),
+          escape: node.escape?.map(nodeToStep),
+          lose: node.lose?.map(nodeToStep),
+        },
+      };
+
+    case 'shop':
+      return { shop: { goods: node.goods.map((good) => ({ ...good })), purchaseOnly: node.purchaseOnly } };
+
+    case 'script':
+      return { script: node.lines.length === 1 ? node.lines[0] : node.lines };
+
+    case 'pluginCommand':
+      return {
+        pluginCommand: { plugin: node.plugin, command: node.command, label: node.label, args: node.args },
+      };
+
+    default: {
+      // Flat-parameter Tier 2 command: the node's own fields are the payload,
+      // minus the discriminant. Printed in full (not diffed against the table's
+      // defaults) so the YAML shows what the event actually does.
+      const { kind, ...fields } = node;
+      if (!SIMPLE_COMMANDS[kind]) throw new Error(`Cannot print unknown node kind: ${JSON.stringify(kind)}`);
+      return { [kind]: fields } as Step;
+    }
   }
+}
+
+function routeStepToSpec(step: MoveStep): MoveStepSpec {
+  const name = ROUTE_NAMES.get(step.code);
+  if (name && step.parameters === undefined) return name;
+  return { step: name ?? step.code, ...(step.parameters ? { parameters: step.parameters } : {}) };
 }
 
 function conditionToPayload(condition: Condition): Pick<IfPayload, 'switch' | 'is' | 'variable' | 'cmp' | 'value' | 'script' | 'raw'> {

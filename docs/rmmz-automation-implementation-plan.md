@@ -66,15 +66,15 @@ v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在�
 | 編輯器功能 | 對應層 / 工具 | 現況 | 排入 |
 |---|---|---|---|
 | 資料庫：flat 表（Actors…Troops、CommonEvents） | `upsert_database`（10 表） | ✓ | M5 已交付 |
-| 資料庫：System（標題/初始隊伍/用語/戰鬥系統） | `update_system`（object merge，非列模型） | ✗ | M6.5 |
-| 資料庫：Tilesets / Animations / MapInfos | `upsert_database` 加表 | ✗ | M6.5 |
-| 地圖生命週期（新建/刪除/改尺寸、地圖樹） | L0 create-file + `create_map`/`resize_map` | ✗（L0 不能新建檔案） | M7 |
-| 地圖繪製（tile / autotile / 通行度） | `paint_tiles` 原語 + L3.5 拼接 | ✗ | M7 |
+| 資料庫：System（標題/初始隊伍/用語/戰鬥系統） | `update_system`（object merge，非列模型） | ✓ | M6.5 已交付 |
+| 資料庫：Tilesets / Animations / MapInfos | `upsert_database` 加表 | ✓ | M6.5 已交付 |
+| 地圖生命週期（新建/改尺寸、地圖樹） | L0 create-file + `create_map`/`resize_map` | ✓（刪除地圖仍未做） | M7 已交付 |
+| 地圖繪製（tile / autotile / 通行度） | `paint_tiles` 原語 + L3.5 拼接 | ✓ | M7 已交付 |
 | 事件：Tier 1 命令 | `apply_script`（L2 編譯器） | ✓ | M3/M5 已交付 |
-| 事件：Tier 2（357 插件指令、商店、戰鬥、移動路線…） | L2 Tier 2 + `PageSpec.moveRoute` | ✗ | M7.5 |
-| 插件管理（js/plugins.js） | `manage_plugins` | ✗ | M7.6 |
+| 事件：Tier 2（357 插件指令、商店、戰鬥、移動路線…） | L2 Tier 2 + `PageSpec.moveRoute` | ✓ | M7.5 已交付 |
+| 插件管理（js/plugins.js） | `manage_plugins` | ✓ | M7.6 已交付 |
 | 素材：清單 | `rmmz://asset-catalog` | ✓ | M5 已交付 |
-| 素材：匯入 | `import_asset` | ✗ | M7.6 |
+| 素材：匯入 | `import_asset` | ✓ | M7.6 已交付 |
 | 測試遊玩（起遊戲給人玩） | `playtest`（http server + 瀏覽器） | ✗ | M8 前段 |
 | headless 測試 / 斷言 | M8 harness | ✗ | M8 |
 | 部署匯出（web / Windows、未用素材剔除） | `deploy` | ✗ | M11 |
@@ -319,7 +319,7 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 | # | 缺口 | 代價 | 排程 |
 |---|---|---|---|
 | 1 | ~~`tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆~~ | 中 | **M7 已修**：`tables.ts` 的 `NEW_ROW_DEFAULTS` 只在「這個 id 還沒有列」時補上 `flags` / `tilesetNames` / `mode`，不碰既有列。清單刻意保持接近空的——per-table schema 仍是 §4.5 說不要提前做的建模，要進這張表得先講得出它擋掉哪一種 crash |
-| 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事 |
+| 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事。**M7.5 沒修**：M7.5 的範圍是事件命令編譯器，跟 allocator 佔用紀錄沒有交集，硬塞進來只會讓兩件事都難 review；順延到 §4.2 sugar 那一層或 `allocate_namespace` 下次動到時 |
 | 3 | ~~`upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入~~ | 中 | **已於 M7 修掉**：`updateFile` 改成先 `dirty.add()` 再跑 updater。這比當初設想的「複製 `[...data]` 再寫回」小得多，也不動 `allocEntityId` 讀 session 即時陣列的行為；代價只是 updater 尚未 mutate 就 throw 時多寫一次位元組相同的檔案 |
 
 ---
@@ -388,6 +388,35 @@ autotile shape 編號沒有 spec，實作方式是**從 MZ 自己的 `Tilemap.FL
 
 **驗收**：同 M3 的 round-trip / idempotent 標準，涵蓋 Tier 2 全部 code。
 
+**實作結果**：Tier 2 全部命令組已實作，`packages/compiler` 的 `ir.ts` / `emit.ts` /
+`decompile.ts` / `dsl/*` 各加一層；`upsert_map_event` 的 `PageSpec.moveRoute` 一併開放
+（走 compiler 匯出的 `moveStep` / `buildMoveRoute`，與 DSL 同一套步驟名）。
+
+分兩類做，理由是它們的形狀不同：
+
+- **22 組扁平參數命令**（金錢/物品/武器/防具、隊伍、HP/MP/狀態/EXP/等級/能力/技能、標籤與
+  跳轉、淡出入、動畫、氣球、中斷/跳出）**由 `ir.ts` 的 `SIMPLE_COMMANDS` 一張表推導**：node
+  型別、emit、decompile、Zod schema、parse、print 全部讀同一張表。手寫的話是約 600 行樣板，
+  把同一件事（`Game_Interpreter` 讀的參數順序）編碼在六個會互相走鐘的地方。
+- **有結構的留手寫**：205（含編輯器寫的 505 鏡像列）、301（typed win/escape/lose 分支，
+  validator 的 `walkNodes` 因此看得進去）、302（+605）、355（+655）、357（MZ 結構化插件指令）。
+
+兩個實作上的決定值得記：
+
+1. 扁平命令**只有在資料形狀真的吻合時**才降成 typed node——參數多過表格、或型別對不上，一律
+   留 `RawNode`。fallback 的承諾是「什麼都不會掉」，靜靜吃掉尾巴就是掉。
+2. `MOVE_ROUTE_CODES` 把 46 個 `Game_Character.ROUTE_*` 全部命名，DSL 寫 `moveLeft` 而不是
+   `code: 2`——理由同 §4.5 對 asset-catalog 的論述（能挑清單就不會幻想）。
+
+順帶關掉的：`validate` 的 `structure/orphan-continuation` 從只認 401/408 擴到 505/605/655；
+`semantics` 的負金錢/負物品規則改讀 typed node（原本讀 raw 參數陣列，其中一筆測試資料的 126
+參數個數本來就是錯的，沒人看得出來，因為它以 raw 形式完美 round-trip）。
+
+**未做（刻意）**：Tier 3（231–235 圖片、261 影片、載具、281–285、331–333）仍走 `RawNode`；
+`RawNode.body` 因此保留——301 不再需要它，但 Tier 3 還有會縮排分支的命令。§4.4 那批
+懸空 weapon/armor/skill/state/troop id 規則的技術阻礙（沒有 Tier 2 node 拿得到那些 id）已經
+消失，但補規則是 M4 的活，沒排進本里程碑。
+
 ---
 
 ### M7.6 — 插件與素材 ・ 1 週
@@ -397,6 +426,37 @@ autotile shape 編號沒有 spec，實作方式是**從 MZ 自己的 `Tilemap.FL
 - `import_asset`：把檔案複製進 `img/` / `audio/` 的正確子目錄，asset-catalog 即時反映
 
 **驗收**：經 MCP 啟用一個插件、匯入一張角色圖並在事件中引用，validate 綠燈、編輯器開啟無損。
+
+**實作結果**：兩個工具都到位，驗收情境作為 `packages/mcp/test/server.test.ts` 的一個
+end-to-end 測試（走真的 MCP 協定：import_asset → manage_plugins → asset-catalog 看得到 →
+upsert_map_event 引用該圖並帶 moveRoute → apply_script 下 357 插件指令 → validate 無 error →
+commit → 檔案落地）。
+
+關鍵是**這兩個工具寫的都不是 `data/*.json`**，而事務模型是本 repo 的中心設計。做法是 core
+加一組 `writeRaw()` / `readRaw()` / `rawWriteFiles()`：以專案根相對路徑暫存位元組，`commit()`
+在資料檔之後寫入並 git add，`rollback()` 整批丟棄。刻意不把它們當資料檔（不是 JSON、沒有
+id 索引結構、素材是我們沒理由 parse 的幾 MB），但一定要接上事務的兩端——不然「匯入素材 →
+改資料庫 → validate 失敗」會留下一個已經落地的素材。路徑是信任邊界（來自 MCP client，且這
+條通道存在的目的就是寫到 `data/` 外面），所以 `resolveRawPath` 擋掉絕對路徑與逃出根目錄。
+
+兩處讀取端跟著改，讓「還沒 commit 的匯入」看得見：`rmmz://asset-catalog` 與 `validate` 的素材
+存在性檢查。後者尤其重要——agent 的用法就是 commit 前先 validate，而那正是「這個檔案不存在」
+保證是誤報的時刻。
+
+`js/plugins.js` 的格式假設集中在 `packages/mcp/src/plugins.ts` 一個檔案（同 `io/format.ts` 對
+`data/*.json` 的處理，risk R1）：讀是對 `var $plugins = [...]` 的陣列字面值做 `JSON.parse`
+（編輯器寫的就是嚴格 JSON；被手改到 `JSON.parse` 都吃不下的檔案，本來就該拒絕覆寫而不是猜），
+寫則一列一個 compact entry 重生，並保留專案原本的檔頭。改一個條目前會先確認
+`js/plugins/<name>.js` 存在——那個 name 是 agent 憑記憶打出來的檔名，而 MZ 對找不到的插件是開
+場即 crash，不是警告。素材端 `assets.ts` 的 `ASSET_DIRS` 與 asset-catalog 共用（匯入不能自創
+資料夾，就像引用不能自創檔名），副檔名不對直接擋：`ImageManager` 自己補 `.png`、
+`AudioManager` 自己試 `.ogg`/`.m4a`，所以一張 `.jpg` 角色圖不是警告，是一個永遠不會出現的
+角色。
+
+**未做（刻意）**：插件列表重排（載入順序＝附加順序）與刪除條目（`status: false` 就是「停用」）
+——兩者都還沒有呼叫端。`readRaw` 沒有 mtime drift 檢查（資料檔那套 `EditorLockSnapshot` 是
+open 時快照的，這裡是用到才讀），所以編輯器同時改 plugins.js 會被蓋掉；視窗只有工具呼叫到
+commit 之間，等有人踩到再說。
 
 ---
 
@@ -614,7 +674,7 @@ event:
 355/655  腳本          357  插件指令（MZ 結構化）
 ```
 
-（「約 20 個」以命令組計，展開的 code 數約 33 個；截至 M6 尚未實作，已排入 **M7.5**。）
+（「約 20 個」以命令組計，展開的 code 數約 33 個，已於 **M7.5** 全數實作。）
 
 **Tier 3（視需求，不急）**：231–235 圖片系統、261 影片、載具、281–285 地圖顯示設定、331–333 敵人操作。
 
@@ -671,8 +731,8 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 - `set_tile_flags(tilesetId, tiles)` — **M7 已交付**，§4.5 規劃時漏列：逐格通行度／地形標籤。
   `upsert_database` 只能整包換掉 8192 長的 `flags`，呼叫端手寫不出來也不該手寫
 - `compose_map(spec)` — **M7 已交付**，走 L3.5（BSP，非 prefab 拼接，理由見 M7 實作結果）
-- `manage_plugins(...)` — **M7.6**：js/plugins.js 條目的讀寫/啟停
-- `import_asset(...)` — **M7.6**：複製素材進 img/、audio/ 正確子目錄
+- `manage_plugins(...)` — **M7.6 已交付**：js/plugins.js 條目的讀寫/啟停
+- `import_asset(...)` — **M7.6 已交付**：複製素材進 img/、audio/ 正確子目錄（走 core 的 writeRaw 暫存，與資料檔同一個事務）
 - `allocate_namespace(name, counts)`
 
 **驗證 / 測試**

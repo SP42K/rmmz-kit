@@ -332,7 +332,10 @@ export interface MoveRoute {
 
 export interface MoveCommand {
   code: number;
-  parameters: any[];
+  /** The editor writes `null`: move routes reuse the event-command struct but never nest. */
+  indent?: number | null;
+  /** Absent on the majority of route commands, which take no parameters. */
+  parameters?: any[];
 }
 
 export interface AudioFile {

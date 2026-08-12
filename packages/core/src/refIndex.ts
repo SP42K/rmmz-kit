@@ -111,6 +111,9 @@ export class RefIndex {
     if (!route?.list) return;
     route.list.forEach((cmd, i) => {
       if (cmd.code !== 27 && cmd.code !== 28) return;
+      // A 27/28 always carries its switch id; a hand-written route missing it
+      // is a broken step, not a reference to switch `undefined`.
+      if (cmd.parameters?.[0] === undefined) return;
       this.add({ kind: 'switch', id: cmd.parameters[0], file, path: `${path} > step ${i} (code ${cmd.code})` });
     });
   }

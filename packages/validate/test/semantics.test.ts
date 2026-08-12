@@ -140,23 +140,26 @@ describe('checkSemantics', () => {
     expect(findings.filter((f) => f.rule === 'semantics/cross-namespace-switch-write')).toEqual([]);
   });
 
-  it('sees commands nested under an unmodeled structural command (Battle Processing win branch)', async () => {
+  it('sees commands nested inside a branch body (Battle Processing, and an unmodeled structural command)', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
     const session = await openProject(dir);
     session.updateFile<MapData>('Map001.json', (data) => {
-      // 301/601 decompile to a RawNode with a `body` — walkNodes must descend
-      // into it or every rule goes blind inside an If Win/If Lose branch.
+      // Two nesting shapes walkNodes has to descend into: 301's typed win
+      // branch, and a command it has no node for at all (RawNode.body). Miss
+      // either and every rule goes blind inside that branch.
       const list = [
         { code: 301, indent: 0, parameters: [0, 1, false, false] },
-        { code: 601, indent: 1, parameters: [] },
-        { code: 125, indent: 2, parameters: [1, 0, 500] }, // unguarded gold loss
-        { code: 604, indent: 1, parameters: [] },
+        { code: 601, indent: 0, parameters: [] },
+        { code: 125, indent: 1, parameters: [1, 0, 500] }, // unguarded gold loss
+        { code: 604, indent: 0, parameters: [] },
+        { code: 900, indent: 0, parameters: [] },
+        { code: 125, indent: 1, parameters: [1, 0, 200] }, // and another
       ];
       data.events.push(mapEvent(2, 'Battle', [page(list)]));
     });
     const findings = checkSemantics(session);
-    expect(findings.some((f) => f.rule === 'semantics/possible-negative-gold')).toBe(true);
+    expect(findings.filter((f) => f.rule === 'semantics/possible-negative-gold')).toHaveLength(2);
   });
 
   it('flags Change Gold decrease with no enclosing Gold>= guard, and not one that has a guard', async () => {
@@ -192,10 +195,10 @@ describe('checkSemantics', () => {
     cleanups.push(cleanup);
     const session = await openProject(dir);
     session.updateFile<MapData>('Map001.json', (data) => {
-      const unguarded = [{ code: 126, indent: 0, parameters: [3, 1, 0, 0, 1] }];
+      const unguarded = [{ code: 126, indent: 0, parameters: [3, 1, 0, 1] }];
       const guarded = [
         { code: 111, indent: 0, parameters: [8, 3, 0] },
-        { code: 126, indent: 1, parameters: [3, 1, 0, 0, 1] },
+        { code: 126, indent: 1, parameters: [3, 1, 0, 1] },
         { code: 412, indent: 0, parameters: [] },
       ];
       data.events.push(mapEvent(2, 'Unguarded', [page(unguarded)]));

@@ -16,13 +16,14 @@ import path from 'node:path';
  * loss can still lose the rename itself and leave the old content: stale, but
  * never corrupt, which is the tradeoff we want.
  */
-export async function atomicWriteFile(filePath: string, content: string): Promise<void> {
+export async function atomicWriteFile(filePath: string, content: string | Uint8Array): Promise<void> {
   const dir = path.dirname(filePath);
   const tmpPath = path.join(dir, `.${path.basename(filePath)}.${randomBytes(6).toString('hex')}.tmp`);
 
   const handle = await open(tmpPath, 'w');
   try {
     try {
+      // The encoding is ignored when `content` is bytes (an imported asset).
       await handle.writeFile(content, 'utf-8');
       await handle.sync();
     } finally {

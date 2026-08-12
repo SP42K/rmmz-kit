@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SIMPLE_COMMANDS, SIMPLE_KINDS, type SimpleFields, type SimpleKind } from '../ir.js';
 
 /**
  * The YAML authoring surface (plan §4.2): what an LLM/human writes. Deliberately
@@ -20,7 +21,52 @@ export type Step =
   | { transfer: { mapId: number; x: number; y: number; direction?: number; fade?: number } }
   | { wait: number }
   | { playSe: { name: string; volume?: number; pitch?: number; pan?: number } }
-  | { raw: { code: number; parameters: unknown[]; body?: Step[] } };
+  | { raw: { code: number; parameters: unknown[]; body?: Step[] } }
+  // Tier 2 (M7.5).
+  | SimpleStep
+  | { moveRoute: MoveRoutePayload }
+  | { playBgm: { name: string; volume?: number; pitch?: number; pan?: number } }
+  | { battle: BattlePayload }
+  | { shop: ShopPayload }
+  | { script: string | string[] }
+  | { pluginCommand: { plugin: string; command: string; label?: string; args?: Record<string, unknown> } };
+
+/**
+ * One step per ir.ts SIMPLE_COMMANDS entry, e.g. `{ gainGold: { value: 100 } }`.
+ * Every field is optional (the table's value is the default) and `null` is
+ * accepted for the whole payload, because a parameterless command written the
+ * natural YAML way — `- fadeOut:` — parses as `{ fadeOut: null }`.
+ */
+export type SimpleStep = { [K in SimpleKind]: { [P in K]: SimpleFields<K> | null } }[SimpleKind];
+
+export interface MoveRoutePayload {
+  /** -1 player, 0 this event (default), >0 event id. */
+  characterId?: number;
+  repeat?: boolean;
+  skippable?: boolean;
+  /** Wait for the route to finish before running the next command. */
+  wait?: boolean;
+  route: MoveStepSpec[];
+}
+
+/** A route step: a MOVE_ROUTE_CODES name on its own, or a name/code plus parameters. */
+export type MoveStepSpec = string | { step: string | number; parameters?: unknown[] };
+
+export interface BattlePayload {
+  /** 0 = troopId is the troop (default), 1 = troopId is a variable, 2 = random encounter. */
+  designation?: number;
+  troopId?: number;
+  canEscape?: boolean;
+  canLose?: boolean;
+  win?: Step[];
+  escape?: Step[];
+  lose?: Step[];
+}
+
+export interface ShopPayload {
+  goods: Array<{ type?: number; id: number; priceType?: number; price?: number }>;
+  purchaseOnly?: boolean;
+}
 
 export type VariableOp = 'set' | 'add' | 'sub' | 'mul' | 'div' | 'mod';
 
@@ -104,7 +150,71 @@ const ChoicePayloadSchema: z.ZodType<ChoicePayload> = z.lazy(() =>
     .strict()
 );
 
+/**
+ * The flat-parameter Tier 2 steps, generated from ir.ts's table rather than
+ * hand-written 22 times — same reason emit/decompile read it: the table *is*
+ * the parameter contract, and a second hand-maintained copy of it here would
+ * only ever be a way for the two to disagree.
+ */
+const SimpleStepSchemas: Array<z.ZodType<Step>> = SIMPLE_KINDS.map((kind) => {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [name, value] of Object.entries(SIMPLE_COMMANDS[kind].fields as Record<string, unknown>)) {
+    const field = typeof value === 'number' ? z.number().int() : typeof value === 'string' ? z.string() : z.boolean();
+    shape[name] = field.optional();
+  }
+  return z.object({ [kind]: z.object(shape).strict().nullable() }).strict() as unknown as z.ZodType<Step>;
+});
+
+const MoveStepSchema: z.ZodType<MoveStepSpec> = z.union([
+  z.string(),
+  z.object({ step: z.union([z.string(), z.number().int()]), parameters: z.array(z.unknown()).optional() }).strict(),
+]);
+
+const MoveRoutePayloadSchema: z.ZodType<MoveRoutePayload> = z
+  .object({
+    characterId: z.number().int().optional(),
+    repeat: z.boolean().optional(),
+    skippable: z.boolean().optional(),
+    wait: z.boolean().optional(),
+    route: z.array(MoveStepSchema),
+  })
+  .strict();
+
+const BattlePayloadSchema: z.ZodType<BattlePayload> = z.lazy(() =>
+  z
+    .object({
+      designation: z.number().int().optional(),
+      troopId: z.number().int().optional(),
+      canEscape: z.boolean().optional(),
+      canLose: z.boolean().optional(),
+      win: stepArray().optional(),
+      escape: stepArray().optional(),
+      lose: stepArray().optional(),
+    })
+    .strict()
+);
+
+const ShopPayloadSchema: z.ZodType<ShopPayload> = z
+  .object({
+    goods: z
+      .array(
+        z
+          .object({
+            type: z.number().int().min(0).max(2).optional().describe('0 item (default), 1 weapon, 2 armor'),
+            id: z.number().int(),
+            priceType: z.number().int().optional().describe("0 the item's own price (default), 1 the `price` below"),
+            price: z.number().int().optional(),
+          })
+          .strict()
+      )
+      .min(1),
+    purchaseOnly: z.boolean().optional(),
+  })
+  .strict();
+
 export const StepSchema: z.ZodType<Step> = z.lazy(() =>
+  // The spread of the generated members makes this an array, not the tuple
+  // z.union's signature wants; the members are all ZodType<Step> either way.
   z.union([
     z.object({ say: z.union([z.string(), SayPayloadSchema]) }).strict(),
     z.object({ comment: z.union([z.string(), z.array(z.string())]) }).strict(),
@@ -163,7 +273,36 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
           .strict(),
       })
       .strict(),
-  ])
+    z.object({ moveRoute: MoveRoutePayloadSchema }).strict(),
+    z
+      .object({
+        playBgm: z
+          .object({
+            name: z.string(),
+            volume: z.number().optional(),
+            pitch: z.number().optional(),
+            pan: z.number().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    z.object({ battle: BattlePayloadSchema }).strict(),
+    z.object({ shop: ShopPayloadSchema }).strict(),
+    z.object({ script: z.union([z.string(), z.array(z.string())]) }).strict(),
+    z
+      .object({
+        pluginCommand: z
+          .object({
+            plugin: z.string(),
+            command: z.string(),
+            label: z.string().optional(),
+            args: z.record(z.string(), z.unknown()).optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    ...SimpleStepSchemas,
+  ] as unknown as [z.ZodType<Step>, z.ZodType<Step>, ...Array<z.ZodType<Step>>])
 );
 
 export const StepListSchema = z.array(StepSchema);

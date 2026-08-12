@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { openProject, type ProjectSession } from '@rmmz-kit/core';
@@ -44,6 +46,8 @@ describe('MCP server wiring', () => {
         'paint_tiles',
         'set_tile_flags',
         'compose_map',
+        'manage_plugins',
+        'import_asset',
         'diff',
         'commit',
         'rollback',
@@ -109,6 +113,82 @@ describe('MCP server wiring', () => {
     };
     expect(mapData.events[2]?.name).toBe('Potion Seller');
     expect(mapData.events[2]?.pages[0].script).toContain('Welcome! Potions');
+  });
+
+  /** Plan §3 M7.6 acceptance: enable a plugin and import a character image over MCP, reference the image from an event, validate clean, commit. */
+  it('imports an asset, enables a plugin, and uses both in one event', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    const source = path.join(dir, 'Hero.png');
+    await writeFile(source, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    const imported = text(
+      await client.callTool({ name: 'import_asset', arguments: { dir: 'img/characters', source, name: 'Hero.png' } })
+    ) as { path: string };
+    expect(imported.path).toBe('img/characters/Hero.png');
+
+    const plugins = text(
+      await client.callTool({ name: 'manage_plugins', arguments: { entries: [{ name: 'TestPlugin', status: true }] } })
+    ) as { plugins: Array<{ name: string; status: boolean }> };
+    expect(plugins.plugins).toEqual([{ name: 'TestPlugin', status: true, description: 'Test Plugin', parameters: {} }]);
+
+    // The uncommitted import is already in the catalog, which is what makes
+    // referencing it in the same session a legal move rather than a guess.
+    const catalog = await client.readResource({ uri: 'rmmz://asset-catalog' });
+    expect(JSON.parse((catalog.contents[0] as { text: string }).text)['img/characters']).toContain('Hero');
+
+    const created = text(
+      await client.callTool({
+        name: 'upsert_map_event',
+        arguments: {
+          mapId: 1,
+          name: 'Patrol',
+          x: 6,
+          y: 6,
+          pages: [
+            {
+              trigger: 0,
+              image: { characterName: 'Hero', characterIndex: 0 },
+              moveType: 3,
+              moveRoute: { route: ['moveLeft', 'moveRight', { step: 'wait', parameters: [30] }], repeat: true },
+            },
+          ],
+        },
+      })
+    ) as { id: number };
+
+    // The plugin command is Tier 2 (M7.5), so this is the DSL, not a raw escape.
+    text(
+      await client.callTool({
+        name: 'apply_script',
+        arguments: {
+          target: { map: 1, event: created.id, page: 1 },
+          dsl: '- pluginCommand:\n    plugin: TestPlugin\n    command: greet\n    args: { who: Hero }\n',
+        },
+      })
+    );
+
+    // Green *including* the asset reference, even though Hero.png is still only
+    // staged — the point of validating before deciding to commit.
+    const findings = text(await client.callTool({ name: 'validate', arguments: {} })) as Array<{
+      severity: string;
+      path?: string;
+    }>;
+    expect(findings.filter((f) => f.severity === 'error' && f.path?.includes(`event ${created.id}`))).toEqual([]);
+
+    text(await client.callTool({ name: 'commit', arguments: { message: 'feat: patrolling hero' } }));
+
+    expect([...(await readFile(path.join(dir, 'img', 'characters', 'Hero.png')))]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(await readFile(path.join(dir, 'js', 'plugins.js'), 'utf-8')).toContain('"TestPlugin"');
+    const map = await client.readResource({ uri: 'rmmz://map/1' });
+    const mapData = JSON.parse((map.contents[0] as { text: string }).text) as {
+      events: Array<{ pages: Array<{ moveRoute: { list: Array<{ code: number }> }; script?: string }> } | null>;
+    };
+    // moveLeft, moveRight, wait 30, ROUTE_END.
+    expect(mapData.events[created.id]?.pages[0].moveRoute.list.map((c) => c.code)).toEqual([2, 3, 15, 0]);
+    expect(mapData.events[created.id]?.pages[0].script).toContain('pluginCommand');
   });
 
   /** Plan §3 M6.5 acceptance: change the game title, a term, and a tileset passage flag over MCP, then commit. */

@@ -34,17 +34,30 @@ function checkDecompilable(ctx: ListContext, findings: Finding[]): void {
   }
 }
 
-/** decompile() only recognizes 401/408 as continuations when scanning forward from a 101/108 it just consumed; a 401/408 that appears anywhere else silently falls back to RawNode instead of erroring, so it needs its own check. */
+/**
+ * Continuation code -> the command it may follow, and what to call it. MZ has
+ * one per multi-row command; each is only valid directly after its opener or
+ * after another row of the same kind, at the same indent.
+ */
+const CONTINUATIONS: Record<number, { opener: number; what: string }> = {
+  401: { opener: 101, what: 'Show Text' },
+  408: { opener: 108, what: 'Comment' },
+  505: { opener: 205, what: 'Set Movement Route' },
+  605: { opener: 302, what: 'Shop Processing' },
+  655: { opener: 355, what: 'Script' },
+};
+
+/** decompile() only recognizes these as continuations when scanning forward from the opener it just consumed; one that appears anywhere else silently falls back to RawNode instead of erroring, so it needs its own check. */
 function checkOrphanContinuations(ctx: ListContext, findings: Finding[]): void {
   ctx.list.forEach((cmd: EventCommand, i: number) => {
-    if (cmd.code !== 401 && cmd.code !== 408) return;
-    const opener = cmd.code === 401 ? 101 : 108;
+    const continuation = CONTINUATIONS[cmd.code];
+    if (!continuation) return;
     const prev = ctx.list[i - 1];
-    if (!prev || prev.indent !== cmd.indent || (prev.code !== opener && prev.code !== cmd.code)) {
+    if (!prev || prev.indent !== cmd.indent || (prev.code !== continuation.opener && prev.code !== cmd.code)) {
       findings.push({
         rule: 'structure/orphan-continuation',
         severity: 'error',
-        message: `Command ${i} (code ${cmd.code}) continues a ${opener === 101 ? 'Show Text' : 'Comment'} block that isn't open here`,
+        message: `Command ${i} (code ${cmd.code}) continues a ${continuation.what} block that isn't open here`,
         file: ctx.file,
         path: ctx.path,
       });
