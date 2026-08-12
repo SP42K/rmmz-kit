@@ -159,9 +159,20 @@ interface PageDraft {
  * across rooms: an NPC in a doorway is the one placement that can wall the
  * player out of a corridor, and spreading across rooms is also what stops a
  * six-quest area putting all twelve events in the same corner.
+ *
+ * Handed-out tiles are also kept orthogonally *apart*. A generated event is
+ * `priorityType: 1` — it blocks movement — so "middle first" on its own packs
+ * them into one solid blob around the room's centre, and the tiles inside that
+ * blob are ones no player can ever step next to. With the arrival tile first in
+ * line that includes the spawn point: four events in the starting room and the
+ * player wakes up walled in. Nothing downstream would catch it, because the
+ * walkthrough drives events with `runEvent` and never walks. Reserving each
+ * taken tile's four neighbours costs about half the room and buys the invariant
+ * that every event has a free tile to be talked to from.
  */
 class Placer {
   private readonly tiles: Point[];
+  private readonly taken = new Set<string>();
   private next = 0;
 
   constructor(rooms: Rect[]) {
@@ -175,11 +186,22 @@ class Placer {
   }
 
   take(what: string): Point {
-    const tile = this.tiles[this.next++];
-    if (!tile) throw new Error(`No free tile left to place ${what} — the area's rooms are full. Give it a larger width/height.`);
-    return tile;
+    while (this.next < this.tiles.length) {
+      const tile = this.tiles[this.next++];
+      if (NEIGHBOURS.some(([dx, dy]) => this.taken.has(`${tile.x + dx},${tile.y + dy}`))) continue;
+      this.taken.add(`${tile.x},${tile.y}`);
+      return tile;
+    }
+    throw new Error(`No free tile left to place ${what} — the area's rooms are full. Give it a larger width/height.`);
   }
 }
+
+const NEIGHBOURS: Array<[number, number]> = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
 
 function tilesByCentrality(room: Rect): Point[] {
   const cx = room.x + (room.width - 1) / 2;
@@ -374,7 +396,11 @@ function resolveItem(
       price: item.price ?? 0,
       // A quest item: it exists to be carried and handed over, so it is never
       // usable (occasion 3) and has no effect — an item with scope 0 that the
-      // menu still offered would be a dead menu entry.
+      // menu still offered would be a dead menu entry. `itypeId` still has to be
+      // 1: Window_ItemList.includes() filters the "item" category on it, so a
+      // row without one is carried but never listed, and the player cannot see
+      // they have the thing the quest giver is asking for.
+      itypeId: 1,
       consumable: true,
       scope: 0,
       occasion: 3,
@@ -408,10 +434,12 @@ function resolveTroop(
       id,
       name,
       // Battler screen positions. Spread horizontally around MZ's own centre so
-      // a generated troop of three doesn't stack into one sprite.
+      // a generated troop of three doesn't stack into one sprite — but the row
+      // has to stay on a 816-wide screen, so the spacing shrinks once a fixed
+      // 140 would push the outermost member off the edge (count 6+).
       members: Array.from({ length: count }, (_, i) => ({
         enemyId: troop.enemyId,
-        x: 300 + (i - (count - 1) / 2) * 140,
+        x: 300 + (i - (count - 1) / 2) * Math.min(140, count > 1 ? 560 / (count - 1) : 140),
         y: 300,
         hidden: false,
       })),

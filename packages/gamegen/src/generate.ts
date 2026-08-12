@@ -68,7 +68,11 @@ export interface GameReport {
   ok: boolean;
   /** One line for an operator; the detail is in the fields below. */
   summary: string;
-  /** Spec-level problems. Non-empty means nothing was built and the session is untouched. */
+  /**
+   * Spec-level problems; non-empty means no build came back. The session is
+   * untouched for every code but `build-failed`, which is the one raised after
+   * the build started — roll back on that one.
+   */
   issues: SpecIssue[];
   build?: GameBuild;
   /** New findings only — anything the project was already carrying is excluded, the same amnesty M9's repair loop grants. */
@@ -103,7 +107,26 @@ export async function generateGame(
   // chasing somebody else's bug.
   const before = new Set((await validateProject(session)).map(keyOf));
 
-  const build = buildGame(session, spec);
+  // `buildGame` throws on the spec problems only the project's geometry can
+  // reveal — an area whose rooms have no room left for its events is the one
+  // that actually happens. Reported rather than propagated: the alternative is
+  // an MCP client that gets a bare exception and no hint that the session is
+  // now half-written and wants a rollback.
+  let build: GameBuild;
+  try {
+    build = buildGame(session, spec);
+  } catch (err) {
+    return {
+      ok: false,
+      summary: `Could not build "${spec.title}": ${(err as Error).message} Roll back — the session is partly written.`,
+      issues: [{ code: 'build-failed', path: 'areas', message: (err as Error).message }],
+      findings: [],
+      battles: [],
+      scenarios: [],
+      suite: [],
+    };
+  }
+
   const findings = (await validateProject(session)).filter((f) => !before.has(keyOf(f)));
   const blocking = findings.filter((f) => f.severity === 'error');
 

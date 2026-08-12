@@ -182,6 +182,43 @@ describe('generateGame', () => {
     expect(report.scenarios.map((s) => s.name)).toEqual(['walkthrough']);
   });
 
+  /**
+   * Generated events block movement (`priorityType: 1`), so two on adjacent
+   * tiles can seal a third — or the spawn point — behind a ring nobody can step
+   * into. The walkthrough cannot see it: `runEvent` never walks. Four quests in
+   * one small area used to leave the player boxed in on frame one.
+   */
+  it('never places two events (or the spawn point) on adjacent tiles', async () => {
+    const session = await open();
+    const build = buildGame(session, {
+      title: 'Crowded',
+      areas: [{ key: 'town', name: 'Town', width: 15, height: 15 }],
+      quests: Array.from({ length: 4 }, (_, q) => ({
+        key: `q${q}`,
+        title: `Quest ${q}`,
+        giver: { area: 'town', name: `Giver ${q}` },
+        objective: { kind: 'talk' as const, area: 'town', name: `Elder ${q}` },
+      })),
+      finale: { area: 'town', name: 'Boss', troop: { enemyId: 1 } },
+    });
+
+    const map = session.readFile<MapData>(mapFileName(build.startMapId));
+    const taken = new Set([`${build.start.x},${build.start.y}`]);
+    for (const event of map.events) if (event) taken.add(`${event.x},${event.y}`);
+    expect(taken.size).toBe(map.events.filter(Boolean).length + 1);
+
+    for (const key of taken) {
+      const [x, y] = key.split(',').map(Number);
+      const free = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ].filter(([dx, dy]) => !taken.has(`${x + dx},${y + dy}`));
+      expect({ key, free: free.length }).toEqual({ key, free: 4 });
+    }
+  });
+
   it('is reproducible: the same spec and seed build byte-identical maps', async () => {
     const [a, b] = await Promise.all([open(), open()]);
     const first = buildGame(a, BANDITS);

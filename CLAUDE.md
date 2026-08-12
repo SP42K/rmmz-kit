@@ -558,8 +558,12 @@ Four files, in the order a call moves through them:
   by construction, so nothing here re-checks the inside of a map), a two-way portal pair per
   `connects` edge, a three-page giver + two-page objective per quest, and a gated finale. Two
   details worth knowing. **Placement is an allocator, not a formula** (`Placer`): two events on one
-  tile is legal MZ and always a bug, so tiles are handed out room-by-room, middle-first — an NPC in
-  a doorway is the one placement that can wall the player out. **The unconditional page must be
+  tile is legal MZ and always a bug, so tiles are handed out room-by-room, middle-first, and each
+  one reserves its four neighbours. That last part is not tidiness — a generated event is
+  `priorityType: 1`, so middle-first on its own packs them into a solid blob whose inner tiles no
+  player can step beside, and with the arrival tile first in line four events in the starting room
+  boxed the player in on frame one. Nothing downstream catches it: the walkthrough drives events
+  with `runEvent` and never walks. **The unconditional page must be
   page 1**: MZ matches pages last-to-first, so an unconditional page anywhere else kills every page
   above it, which `validate`'s `semantics/dead-event-page` reports as an error.
 - `walkthrough.ts` — the build's own regression suite, derived from the *spec* and not from the
