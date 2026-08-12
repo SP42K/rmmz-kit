@@ -134,6 +134,41 @@ describe('tools', () => {
     expect(alloc.switches[1]).toBe(alloc.switches[0] + 1);
   });
 
+  it('updateSystem shallow-merges, replacing a nested field whole and naming keys the file lacked', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const { newFields } = tools.updateSystem(session, {
+      gameTitle: 'Herb Quest',
+      terms: { basic: ['Lv'], messages: { actionFailure: 'Nothing happened.' } },
+      gametitle: 'typo',
+    });
+
+    const system = session.readFile<Record<string, unknown>>('System.json');
+    expect(system.gameTitle).toBe('Herb Quest');
+    expect(system.currencyUnit).toBe('G'); // untouched fields survive the merge
+    expect(system.terms).toEqual({ basic: ['Lv'], messages: { actionFailure: 'Nothing happened.' } });
+    // The typo isn't rejected (System's real key set is wider than SystemData),
+    // but it is reported, which is the only signal a caller gets.
+    expect(newFields).toEqual(['terms', 'gametitle']);
+  });
+
+  it('upsertDatabase edits a tileset passage flag (M6.5 acceptance)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const flags = [...session.readFile<Array<{ flags: number[] } | null>>('Tilesets.json')[1]!.flags];
+    flags[48] = 15;
+    tools.upsertDatabase(session, 'tilesets', [{ id: 1, flags }]);
+
+    const tileset = session.readFile<Array<{ flags: number[]; name: string } | null>>('Tilesets.json')[1]!;
+    expect(tileset.flags[48]).toBe(15);
+    expect(tileset.flags).toHaveLength(8192); // a short array here is a broken map in the editor
+    expect(tileset.name).toBe('Field'); // shallow merge, not replace
+  });
+
   it('simulateBattle reports on uncommitted data', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

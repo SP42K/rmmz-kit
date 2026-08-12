@@ -38,6 +38,7 @@ describe('MCP server wiring', () => {
         'allocate_namespace',
         'validate',
         'simulate_battle',
+        'update_system',
         'diff',
         'commit',
         'rollback',
@@ -103,6 +104,48 @@ describe('MCP server wiring', () => {
     };
     expect(mapData.events[2]?.name).toBe('Potion Seller');
     expect(mapData.events[2]?.pages[0].script).toContain('Welcome! Potions');
+  });
+
+  /** Plan §3 M6.5 acceptance: change the game title, a term, and a tileset passage flag over MCP, then commit. */
+  it('edits System.json and Tilesets.json over the protocol', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    text(
+      await client.callTool({
+        name: 'update_system',
+        arguments: { patch: { gameTitle: 'Herb Quest', currencyUnit: 'Gil' } },
+      })
+    );
+
+    const tilesets = JSON.parse(
+      ((await client.readResource({ uri: 'rmmz://database/tilesets' })).contents[0] as { text: string }).text
+    ) as Array<{ flags: number[] } | null>;
+    const flags = [...tilesets[1]!.flags];
+    flags[48] = 15;
+    text(await client.callTool({ name: 'upsert_database', arguments: { table: 'tilesets', entries: [{ id: 1, flags }] } }));
+
+    const dirty = text(await client.callTool({ name: 'diff', arguments: {} })) as { files: string[] };
+    expect(new Set(dirty.files)).toEqual(new Set(['System.json', 'Tilesets.json']));
+
+    const committed = text(
+      await client.callTool({ name: 'commit', arguments: { message: 'retitle the game and block a tile' } })
+    ) as { commit: string };
+    expect(committed.commit).toMatch(/^[0-9a-f]{40}$/);
+
+    // Reopening reads what was actually written to disk — the editor's view of it.
+    const reopened = await connectedClient(await openProject(dir));
+    const summary = JSON.parse(
+      ((await reopened.readResource({ uri: 'rmmz://project/summary' })).contents[0] as { text: string }).text
+    ) as { gameTitle: string };
+    expect(summary.gameTitle).toBe('Herb Quest');
+    const written = JSON.parse(
+      ((await reopened.readResource({ uri: 'rmmz://database/tilesets' })).contents[0] as { text: string }).text
+    ) as Array<{ flags: number[]; name: string } | null>;
+    expect(written[1]!.flags[48]).toBe(15);
+    expect(written[1]!.flags).toHaveLength(8192);
+    expect(written[1]!.name).toBe('Field');
   });
 
   it('reports a tool error instead of throwing when applying a script to a nonexistent page', async () => {

@@ -20,8 +20,9 @@ ID allocator, reference index). M3 / L2 Tier 1 done (`packages/compiler`: YAML D
 IR, emit, decompile — see below). M4 / L4 done (`packages/validate`: structure,
 reference-integrity, and semantic/graph rules — see below). M5 / L3 done
 (`packages/mcp`: MCP tool/resource layer — see below). M6 / L4.5 done
-(`packages/battlesim`: headless battle simulator — see below). L2 Tier 2/3 and
-everything from M7 onward not started.
+(`packages/battlesim`: headless battle simulator — see below). M6.5 done
+(Tilesets/Animations/MapInfos in `upsert_database`, plus `update_system`). L2
+Tier 2/3 and everything from M7 onward not started.
 
 ## Commands
 
@@ -170,8 +171,8 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 9 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `allocate_namespace`,
-`validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`,
+plus 10 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
+`allocate_namespace`, `validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`,
 `playtest`, and `coverage` — omitted here because they front L3.5/L5 (M7/M8), which
 don't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
 decision A (MCP is a thin transport over real logic, not the other way around). `simulate_battle`
@@ -187,8 +188,15 @@ page N inherits the list of the page N it replaced (a new page starts empty), so
 `upsert_map_event` to move an NPC one tile can't silently delete its dialogue. `upsert_database` is the opposite: a shallow merge onto
 whatever row already has that id (or a new row via `IdAllocator.allocEntityId`), since Actor/Item/
 .../Troop fields don't have the same "only makes sense together" coupling a page's fields do — and
-per-table Zod schemas for all ten tables is exactly the upfront modeling §4.5 says not to build
-ahead of need. `ProjectSession.dirtyFiles()` (a small core addition, same pattern as `RefIndex.entries()`
+per-table Zod schemas for all thirteen tables is exactly the upfront modeling §4.5 says not to build
+ahead of need. M6.5 added Tilesets/Animations/MapInfos to that list — flat id-indexed arrays, so
+they cost one line each in `tables.ts` — and `update_system` for the one database file that isn't
+a table: System.json is a single object, shallow-merged (nested fields like `terms` replaced whole).
+`update_system` deliberately does *not* reject unknown patch keys the way `upsert_map_event` does,
+because core's `SystemData` is a known subset of what MZ writes (`advanced`, `itemCategories`,
+`optAutosave`, …) and an allowlist would reject real fields; it returns `newFields` instead, so a
+typo is visible in the tool result rather than silent. The fixture gained `Tilesets.json` (real
+8192-length `flags`, since a short one is a broken map in the editor) and `Animations.json`. `ProjectSession.dirtyFiles()` (a small core addition, same pattern as `RefIndex.entries()`
 for M4) backs the `diff` tool.
 
 ### L4.5 battle simulator (`packages/battlesim`)

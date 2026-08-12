@@ -198,6 +198,29 @@ export function upsertDatabase(
   return ids;
 }
 
+/**
+ * System.json is a single object, not an id-indexed array, so upsertDatabase's
+ * row model doesn't apply (plan §3 M6.5) — shallow merge instead: a nested
+ * field like `terms` or `titleBgm` is replaced whole, since the fields under it
+ * are only meaningful as a set and deep-merging System's many arrays
+ * (`switches`, `elements`, `menuCommands`) has no sensible element-wise rule.
+ *
+ * Unlike upsertMapEvent's page specs there is no unknown-key rejection here:
+ * core's `SystemData` is a deliberate subset of what MZ actually writes
+ * (`advanced`, `itemCategories`, `optAutosave`, ... aren't modeled), so an
+ * allowlist would reject legitimate fields — exactly the R1 failure mode. The
+ * returned `newFields` is the cheap substitute: a typo like `gametitle` shows
+ * up in the tool result as a field that wasn't already there.
+ */
+export function updateSystem(session: ProjectSession, patch: Record<string, unknown>): { newFields: string[] } {
+  let newFields: string[] = [];
+  session.updateFile<Record<string, unknown>>('System.json', (data) => {
+    newFields = Object.keys(patch).filter((key) => !(key in data));
+    return { ...data, ...patch };
+  });
+  return { newFields };
+}
+
 export function allocateNamespace(
   session: ProjectSession,
   namespace: string,
