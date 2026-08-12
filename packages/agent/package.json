@@ -1,5 +1,5 @@
 {
-  "name": "@rmmz-kit/mcp",
+  "name": "@rmmz-kit/agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,21 +12,12 @@
       "default": "./dist/index.js"
     }
   },
-  "bin": {
-    "rmmz-mcp": "./dist/bin.js"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@rmmz-kit/agent": "*",
-    "@rmmz-kit/battlesim": "*",
-    "@rmmz-kit/compiler": "*",
     "@rmmz-kit/core": "*",
-    "@rmmz-kit/mapgen": "*",
-    "@rmmz-kit/playtest": "*",
     "@rmmz-kit/validate": "*",
-    "zod": "^3.23.8"
+    "@rmmz-kit/playtest": "*"
   }
 }

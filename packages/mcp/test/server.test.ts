@@ -50,6 +50,7 @@ describe('MCP server wiring', () => {
         'import_asset',
         'playtest',
         'run_scenario',
+        'repair',
         'diff',
         'commit',
         'rollback',
@@ -357,6 +358,57 @@ describe('MCP server wiring', () => {
     ) as { pass: boolean; failures: string[] };
     expect(declined.pass).toBe(false);
     expect(declined.failures[0]).toContain('switch 10');
+  });
+
+  /** Plan §3 M9, over the protocol: the client is the generator, the tool is the loop. */
+  it('drives the repair loop from the client side: diagnose, edit, converge', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    const created = text(
+      await client.callTool({ name: 'upsert_map_event', arguments: { mapId: 1, name: 'Herbalist', x: 3, y: 4, pages: [{ trigger: 0 }] } })
+    ) as { id: number };
+    // A first draft that says the right thing and does nothing.
+    text(await client.callTool({ name: 'apply_script', arguments: { target: { map: 1, event: created.id, page: 1 }, dsl: '- say: "Thank you!"' } }));
+
+    const suite = [
+      {
+        name: 'quest starts',
+        steps: [
+          { action: 'runEvent', map: 1, event: created.id },
+          { action: 'expect', expect: { switch: { id: 10, value: true } } },
+        ],
+      },
+    ];
+
+    const started = text(await client.callTool({ name: 'repair', arguments: { action: 'start', scenarios: suite, commitMessage: 'feat: herbalist' } })) as {
+      outcome: string;
+      feedback: string;
+    };
+    expect(started.outcome).toBe('repairing');
+    expect(started.feedback).toContain('switch 10: expected true, got false');
+
+    text(
+      await client.callTool({
+        name: 'apply_script',
+        arguments: { target: { map: 1, event: created.id, page: 1 }, dsl: '- setSwitch: { from: 10, value: true }\n- say: "Thank you!"' },
+      })
+    );
+
+    const done = text(await client.callTool({ name: 'repair', arguments: { action: 'check' } })) as { outcome: string; commit: string };
+    expect(done.outcome).toBe('converged');
+    expect(done.commit).toMatch(/^[0-9a-f]{40}$/);
+
+    // Convergence is the only thing that writes, so the event is on disk now.
+    const reopened = await connectedClient(await openProject(dir));
+    const map = JSON.parse(((await reopened.readResource({ uri: 'rmmz://map/1' })).contents[0] as { text: string }).text) as {
+      events: Array<{ name: string } | null>;
+    };
+    expect(map.events[created.id]!.name).toBe('Herbalist');
+
+    text(await client.callTool({ name: 'repair', arguments: { action: 'abort' } }));
+    expect(text(await client.callTool({ name: 'repair', arguments: { action: 'status' } }))).toEqual({ outcome: 'none' });
   });
 
   it('serves the project over the playtest tool and stops again', async () => {

@@ -36,6 +36,7 @@ import {
   type Scenario,
   type ScenarioReport,
 } from '@rmmz-kit/playtest';
+import { RepairLoop, type RepairSpec } from '@rmmz-kit/agent';
 import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 /**
@@ -429,6 +430,42 @@ export async function playtest(
  */
 export function runScenarioTool(session: ProjectSession, scenario: Scenario): ScenarioReport {
   return runScenario(session, scenario);
+}
+
+/**
+ * `repair` (plan §3 M9): the L6 loop, driven by the client rather than driving
+ * it. The generator in that pipeline is an LLM, and here the LLM *is* the MCP
+ * client — so the loop cannot call it, and instead exposes the state machine:
+ * `start` snapshots what is already broken, then the client edits with the
+ * ordinary tools and calls `check` to have the attempt graded. `check` returns
+ * the feedback to act on, or stops the loop (`converged` / `exhausted` /
+ * `oscillating`). One loop per process, like `playtest`: two concurrent loops
+ * over the same session would grade each other's edits.
+ */
+let repairLoop: RepairLoop | null = null;
+
+export type RepairAction = 'start' | 'check' | 'status' | 'abort';
+
+export async function repair(
+  session: ProjectSession,
+  action: RepairAction = 'check',
+  spec: RepairSpec = {}
+): Promise<Record<string, unknown>> {
+  switch (action) {
+    case 'start':
+      repairLoop = new RepairLoop(session, spec);
+      return { ...(await repairLoop.start()) };
+    case 'check':
+      if (!repairLoop) throw new Error('No repair loop is running — call repair with action "start" first.');
+      return { ...(await repairLoop.check()) };
+    case 'status': {
+      const status = repairLoop?.status();
+      return status ? { ...status } : { outcome: 'none' };
+    }
+    case 'abort':
+      repairLoop = null;
+      return { outcome: 'none' };
+  }
 }
 
 export function commit(session: ProjectSession, message: string): Promise<string | null> {
