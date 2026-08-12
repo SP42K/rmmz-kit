@@ -127,12 +127,23 @@ export class ProjectSession {
     this.rawWrites.set(this.resolveRawPath(relPath), content);
   }
 
-  /** Staged content if this session wrote it, otherwise what's on disk. Text only — assets are written, never read back. */
+  /**
+   * Staged content if this session wrote it, otherwise what's on disk, or null
+   * if there is no such file. Text only — assets are written, never read back.
+   *
+   * Only ENOENT becomes null: callers read this to decide whether a file needs
+   * creating from scratch (managePlugins rewrites js/plugins.js from an empty
+   * list when it reads null), so collapsing EACCES/EISDIR/EBUSY into "absent"
+   * would turn a transient read failure into "drop every plugin in the list".
+   */
   async readRaw(relPath: string): Promise<string | null> {
     const key = this.resolveRawPath(relPath);
     const staged = this.rawWrites.get(key);
     if (staged !== undefined) return typeof staged === 'string' ? staged : Buffer.from(staged).toString('utf-8');
-    return readFile(path.join(this.rootPath, key), 'utf-8').catch(() => null);
+    return readFile(path.join(this.rootPath, key), 'utf-8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    });
   }
 
   /** Non-data files staged by writeRaw(), root-relative with forward slashes. */

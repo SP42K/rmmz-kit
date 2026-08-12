@@ -145,7 +145,9 @@ function emitNode(node: Node, indent: number, out: EventCommand[]): void {
       // The 505 mirror rows: one per route step, terminator included. The
       // interpreter ignores them, the editor renders from them — omitting them
       // makes a route the game runs but the editor shows as a blank line.
-      for (const step of route.list) out.push({ code: 505, indent, parameters: [step] });
+      // Copied, not aliased: the same object in both the 205's route and a 505
+      // means mutating one silently mutates the other (see the RawNode case).
+      for (const step of route.list) out.push({ code: 505, indent, parameters: [{ ...step }] });
       return;
     }
 

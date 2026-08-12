@@ -167,9 +167,12 @@ function checkNegativeResources(session: ProjectSession, findings: Finding[]): v
     const nodes = tryDecompile(ctx.list);
     if (!nodes) return;
     walkNodes(nodes, (node, guards) => {
-      // operation 1 = decrease. Only the constant-operand form is judged: with
-      // operandType 1 the amount is a variable, and this rule has no value
-      // analysis to say whether the guard covers it.
+      // operation 1 = decrease, for either operand type: with operandType 1 the
+      // amount is a variable, and "spend an unknown amount with no possession
+      // check" is if anything the more suspicious of the two. What this rule
+      // can't judge either way is whether a *present* guard covers the amount —
+      // it has no value analysis — which is why it only looks for the guard's
+      // existence.
       if (node.kind === 'gainGold') {
         if (node.operation === 1 && !guards.gold) {
           findings.push({

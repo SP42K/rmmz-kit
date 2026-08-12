@@ -242,38 +242,59 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
       }
 
       case 301: {
-        const [designation, troopId, canEscape, canLose] = cmd.parameters as [number, number, boolean, boolean];
-        pos++;
-        const branches: Array<[601 | 602 | 603, Node[]]> = [];
-        for (const code of [601, 602, 603] as const) {
-          if (cmds[pos]?.code !== code || cmds[pos].indent !== indent) continue;
+        // A 301 whose branch labels aren't the canonical 601/602/603 + 604 (a
+        // plugin-written or truncated list) must degrade to RawNode like every
+        // other unmodeled shape: RawNode.body already nests 601-style branches,
+        // and throwing here would break "decompiling an arbitrary project never
+        // fails" — which also takes down rmmz://map/{id} for the whole map.
+        const start = pos;
+        try {
+          const [designation, troopId, canEscape, canLose] = cmd.parameters as [number, number, boolean, boolean];
           pos++;
-          const result = parseBlock(cmds, pos, indent + 1);
-          pos = result.pos;
-          pos = consumeOptionalFiller(cmds, pos, indent + 1);
-          branches.push([code, result.nodes]);
+          const branches: Array<[601 | 602 | 603, Node[]]> = [];
+          for (const code of [601, 602, 603] as const) {
+            if (cmds[pos]?.code !== code || cmds[pos].indent !== indent) continue;
+            pos++;
+            const result = parseBlock(cmds, pos, indent + 1);
+            pos = result.pos;
+            pos = consumeOptionalFiller(cmds, pos, indent + 1);
+            branches.push([code, result.nodes]);
+          }
+          expect(cmds, pos, 604, indent);
+          pos++;
+          const branch = (code: 601 | 602 | 603) => branches.find(([c]) => c === code)?.[1];
+          nodes.push({
+            kind: 'battle',
+            designation,
+            troopId,
+            canEscape,
+            canLose,
+            win: branch(601),
+            escape: branch(602),
+            lose: branch(603),
+          });
+        } catch {
+          // Nothing was pushed (the node lands only after `expect` passes), so
+          // rewinding `pos` is enough to re-read the 301 as a raw command. A
+          // genuinely malformed *body* still throws, out of pushRaw's own
+          // parseBlock — this only swallows the 301-shape mismatch.
+          pos = pushRaw(nodes, cmds, start, indent);
         }
-        expect(cmds, pos, 604, indent);
-        pos++;
-        const branch = (code: 601 | 602 | 603) => branches.find(([c]) => c === code)?.[1];
-        nodes.push({
-          kind: 'battle',
-          designation,
-          troopId,
-          canEscape,
-          canLose,
-          win: branch(601),
-          escape: branch(602),
-          lose: branch(603),
-        });
         break;
       }
 
       case 302: {
+        // Same shape guard `matchesSimple` applies to the flat table: a 302 the
+        // ShopNode can't hold whole (an extra parameter, a non-numeric good)
+        // would lose that data when emit rewrites the canonical 5-element array.
+        if (!isGood(cmd.parameters, 5)) {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
         const [type, id, priceType, price, purchaseOnly] = cmd.parameters as [number, number, number, number, boolean];
         pos++;
         const goods: ShopGood[] = [{ type, id, priceType, price }];
-        while (cmds[pos]?.code === 605 && cmds[pos].indent === indent) {
+        while (cmds[pos]?.code === 605 && cmds[pos].indent === indent && isGood(cmds[pos].parameters, 4)) {
           const [t, i, pt, p] = cmds[pos].parameters as [number, number, number, number];
           goods.push({ type: t, id: i, priceType: pt, price: p });
           pos++;
@@ -283,9 +304,20 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
       }
 
       case 355: {
-        const lines: string[] = [cmd.parameters[0] as string];
+        // ScriptNode holds strings; a 355 carrying anything else would come
+        // back out of emit as that non-string, or as `null` if it was missing.
+        if (typeof cmd.parameters[0] !== 'string') {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
+        const lines: string[] = [cmd.parameters[0]];
         pos++;
-        while (pos < cmds.length && cmds[pos].code === 655 && cmds[pos].indent === indent) {
+        while (
+          pos < cmds.length &&
+          cmds[pos].code === 655 &&
+          cmds[pos].indent === indent &&
+          typeof cmds[pos].parameters[0] === 'string'
+        ) {
           lines.push(cmds[pos].parameters[0] as string);
           pos++;
         }
@@ -367,6 +399,11 @@ function pushRaw(nodes: Node[], cmds: EventCommand[], pos: number, indent: numbe
 function matchesSimple(simple: { fields: string[]; defaults: unknown[] }, parameters: unknown[]): boolean {
   if (parameters.length > simple.fields.length) return false;
   return parameters.every((value, i) => typeof value === typeof simple.defaults[i]);
+}
+
+/** A stock row: `[type, id, priceType, price]`, plus `purchaseOnly` on the 302 itself (`max` 5, vs 4 for a 605). Same "nothing is lost" test as matchesSimple. */
+function isGood(parameters: unknown[], max: number): boolean {
+  return parameters.length <= max && parameters.slice(0, 4).every((value) => typeof value === 'number');
 }
 
 /** MZ terminates a move route with ROUTE_END; the IR omits it the same way it omits the command list's own terminator. */

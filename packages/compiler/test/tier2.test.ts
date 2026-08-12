@@ -256,4 +256,31 @@ describe('Tier 2 DSL', () => {
     expect(() => parseDsl('- gainGold: { valeu: 100 }')).toThrow();
     expect(() => parseDsl('- battle: { troopId: 1, wn: [] }')).toThrow();
   });
+
+  it('degrades a structured command it cannot hold whole to RawNode, never throwing and never dropping a parameter', () => {
+    // The typed nodes for 301/302/355 are the shapes MZ writes; anything else
+    // (a plugin's, a truncated list) has to survive verbatim, or decompiling an
+    // arbitrary project both fails and loses data.
+    const noClosing304: EventCommand[] = [
+      { code: 301, indent: 0, parameters: [0, 1, false, false] },
+      { code: 601, indent: 0, parameters: [] },
+      { code: 230, indent: 1, parameters: [30] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    expect(decompile(noClosing304)).toEqual([
+      { kind: 'raw', code: 301, parameters: [0, 1, false, false] },
+      { kind: 'raw', code: 601, parameters: [], body: [{ kind: 'wait', frames: 30 }] },
+    ]);
+
+    const oddShapes: EventCommand[] = [
+      { code: 302, indent: 0, parameters: [0, 1, 0, 0, false, 'plugin extra'] },
+      { code: 355, indent: 0, parameters: [] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    expect(decompile(oddShapes)).toEqual([
+      { kind: 'raw', code: 302, parameters: [0, 1, 0, 0, false, 'plugin extra'] },
+      { kind: 'raw', code: 355, parameters: [] },
+    ]);
+    expect(compile(decompile(oddShapes))).toEqual(oddShapes);
+  });
 });
