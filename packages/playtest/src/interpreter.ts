@@ -171,7 +171,8 @@ export class Interpreter {
 
   private exec(nodes: Node[], ctx: RunContext): Signal {
     for (const node of nodes) {
-      if (--this.budget <= 0) {
+      // Post-decrement: `maxCommands: N` must allow N commands to run, not N-1.
+      if (this.budget-- <= 0) {
         throw new Error(
           `Command budget exhausted in ${ctx.key} — an event loop with no reachable Break Loop or Exit Event Processing?`
         );
@@ -203,7 +204,20 @@ export class Interpreter {
         const fallback = node.defaultType >= 0 && node.defaultType < node.choices.length ? node.defaultType : 0;
         const chosen = queued ?? fallback;
         s.choices.push({ choices: [...node.choices], chosen });
-        if (chosen === -1) return this.exec(node.cancelBranch ?? [], ctx);
+        if (chosen === -1) {
+          // MZ's `cancelType`: -1 disallows cancel entirely, -2 routes to the
+          // 403 "When Cancel" body, and >= 0 makes cancel behave as choosing
+          // that index — with `setupChoices` normalizing anything >= the choice
+          // count to -2, which is what the editor writes for "Branch". Ignoring
+          // all of that made a -1 answer run *nothing* whenever the choice had
+          // no 403 body: a scenario that silently proved nothing.
+          const cancelType = node.cancelType >= node.choices.length ? -2 : node.cancelType;
+          if (cancelType === -1) {
+            throw new Error(`Choice in ${ctx.key} does not allow cancel (cancelType -1), so -1 is not an answer to it`);
+          }
+          if (cancelType >= 0) return this.exec(node.branches[cancelType] ?? [], ctx);
+          return this.exec(node.cancelBranch ?? [], ctx);
+        }
         const branch = node.branches[chosen];
         if (!branch) throw new Error(`Choice answer ${chosen} is out of range in ${ctx.key} (${node.choices.length} choices)`);
         return this.exec(branch, ctx);
@@ -281,6 +295,12 @@ export class Interpreter {
         this.battles.push({ troopId: node.troopId, outcome });
         if (node.designation !== 0) this.note('Battle Processing with a variable/random troop (301)');
         const branch = outcome === 'win' ? node.win : outcome === 'escape' ? node.escape : node.lose;
+        // An absent branch means MZ wrote no 60x for it — usually because
+        // canEscape/canLose is false, i.e. the queue asked for an outcome this
+        // battle cannot have. Running nothing is the only honest answer, but it
+        // has to be counted, or the scenario reads as green with a whole
+        // requested outcome silently unproven.
+        if (!branch) this.note(`Battle Processing outcome '${outcome}' with no such branch (301)`);
         return this.exec(branch ?? [], ctx);
       }
 

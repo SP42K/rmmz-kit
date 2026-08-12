@@ -2,6 +2,7 @@ import http from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
 import { spawn } from 'node:child_process';
 
 /**
@@ -104,7 +105,11 @@ async function serve(root: string, req: http.IncomingMessage, res: http.ServerRe
     'Content-Length': fileInfo.size,
   });
   if (req.method === 'HEAD') return void res.end();
-  createReadStream(file).pipe(res);
+  // `pipeline`, not `pipe`: pipe forwards no errors, so a read that fails after
+  // stat() succeeded (the file deleted or locked between the two, EACCES) emits
+  // an unhandled 'error' on the stream — which is an uncaught exception that
+  // takes the whole MCP server process down over one missing sprite.
+  pipeline(createReadStream(file), res, () => {});
 }
 
 function end(res: http.ServerResponse, status: number, message: string): void {

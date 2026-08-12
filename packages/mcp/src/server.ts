@@ -47,6 +47,7 @@ const scenarioStep = z.discriminatedUnion('action', [
   z.object({ action: z.literal('teleport'), map: z.number().int(), x: z.number().int(), y: z.number().int() }),
   z.object({ action: z.literal('answerChoices'), choices: z.array(z.number().int()) }),
   z.object({ action: z.literal('answerBattles'), outcomes: z.array(z.enum(['win', 'escape', 'lose'])) }),
+  z.object({ action: z.literal('clearMessages') }).describe('Forget the messages shown so far, so a later noMessage assertion is about what comes next'),
   z.object({
     action: z.literal('expect'),
     expect: z

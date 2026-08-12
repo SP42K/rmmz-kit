@@ -65,7 +65,9 @@
       }
       const event = $gameMap.event(eventId);
       if (!event) throw new Error(`runEvent: map ${mapId} has no event ${eventId}`);
-      const list = page ? event.event().pages[page - 1].list : event.list();
+      // Optional chaining, or an out-of-range page is a bare TypeError from the
+      // property read and the message below never gets to say which page.
+      const list = page ? event.event().pages[page - 1]?.list : event.list();
       if (!list) throw new Error(`runEvent: map ${mapId} event ${eventId} has no page ${page || '(matching one)'}`);
       currentInterpreter().setup(list, eventId);
     },

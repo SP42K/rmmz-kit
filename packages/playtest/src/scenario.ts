@@ -26,6 +26,8 @@ export type ScenarioStep =
   | { action: 'teleport'; map: number; x: number; y: number }
   | { action: 'answerChoices'; choices: number[] }
   | { action: 'answerBattles'; outcomes: Array<'win' | 'escape' | 'lose'> }
+  /** Forget every message shown so far, so `noMessage` can be scoped to what comes next. */
+  | { action: 'clearMessages' }
   | { action: 'expect'; expect: Assertion };
 
 /** Every field present is one check; absent fields are not checked. */
@@ -40,7 +42,12 @@ export interface Assertion {
   playerAt?: { map: number; x?: number; y?: number };
   /** A shown message line contains this substring. */
   message?: string;
-  /** No shown message line contains this substring — the "the NPC must not still offer the quest" assertion. */
+  /**
+   * No shown message line contains this substring — the "the NPC must not still
+   * offer the quest" assertion. Checked over every message the run has shown so
+   * far, so a scenario that legitimately saw that line earlier (it is usually
+   * how the quest *started*) must issue a `clearMessages` step first.
+   */
   noMessage?: string;
   /** This plugin command was issued. */
   pluginCalled?: { plugin: string; command: string };
@@ -105,17 +112,21 @@ export function runScenario(session: ProjectSession, scenario: Scenario): Scenar
   const failures: string[] = [];
 
   for (const [index, step] of scenario.steps.entries()) {
-    if (step.action === 'expect') {
-      const checks = check(interpreter, step.expect);
-      const ok = checks.every((c) => c.ok);
-      steps.push({ index, action: 'expect', ok, checks });
-      for (const failed of checks.filter((c) => !c.ok)) {
-        failures.push(`step ${index} expect ${failed.what}: expected ${JSON.stringify(failed.expected)}, got ${JSON.stringify(failed.actual)}`);
-      }
-      continue;
-    }
-
     try {
+      if (step.action === 'expect') {
+        // Inside the try: `check` reads project data (activePage resolves the
+        // event's pages), so an assertion naming a map or event that doesn't
+        // exist throws — and outside, that throw would take the whole report
+        // with it, leaving the caller a bare error instead of a trajectory.
+        const checks = check(interpreter, step.expect);
+        const ok = checks.every((c) => c.ok);
+        steps.push({ index, action: 'expect', ok, checks });
+        for (const failed of checks.filter((c) => !c.ok)) {
+          failures.push(`step ${index} expect ${failed.what}: expected ${JSON.stringify(failed.expected)}, got ${JSON.stringify(failed.actual)}`);
+        }
+        continue;
+      }
+
       apply(interpreter, step);
       steps.push({ index, action: step.action, ok: true });
     } catch (err) {
@@ -168,6 +179,8 @@ function apply(interpreter: Interpreter, step: Exclude<ScenarioStep, { action: '
       return interpreter.answerChoices(step.choices);
     case 'answerBattles':
       return interpreter.answerBattles(step.outcomes);
+    case 'clearMessages':
+      return void state.messages.splice(0, state.messages.length);
   }
 }
 
