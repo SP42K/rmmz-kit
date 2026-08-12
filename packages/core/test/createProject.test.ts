@@ -10,6 +10,11 @@ import { makeTestProject } from './testProject.js';
 
 const execFileAsync = promisify(execFile);
 
+function restore(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
 describe('createProject', () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -43,6 +48,25 @@ describe('createProject', () => {
     // No engine, no art — say so rather than hand back a project that silently
     // fails to boot.
     expect(result.warnings.some((w) => w.includes('runtimeFrom'))).toBe(true);
+  });
+
+  it('still makes the baseline commit on a machine with no git identity', async () => {
+    const dir = await target();
+    // What a CI runner or a fresh container looks like: no global or system git
+    // config, so `git commit` would fail with "please tell me who you are" and
+    // leave a project whose repo has no baseline for rollback() to return to.
+    const saved = { global: process.env.GIT_CONFIG_GLOBAL, system: process.env.GIT_CONFIG_SYSTEM };
+    process.env.GIT_CONFIG_GLOBAL = path.join(dir, '..', 'nonexistent-gitconfig');
+    process.env.GIT_CONFIG_SYSTEM = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      const result = await createProject(dir, { title: 'No Identity' });
+
+      expect(result.commit).toMatch(/^[0-9a-f]{7,}$/);
+      expect(result.warnings.some((w) => w.includes('user.email'))).toBe(true);
+    } finally {
+      restore('GIT_CONFIG_GLOBAL', saved.global);
+      restore('GIT_CONFIG_SYSTEM', saved.system);
+    }
   });
 
   it('System.json carries the fields the engine reads, and references no asset the project lacks', async () => {

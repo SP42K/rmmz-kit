@@ -104,6 +104,11 @@ export async function createProject(targetPath: string, options: CreateProjectOp
     // otherwise complete on disk.
     commit = await git
       .init()
+      .then(async () => {
+        if (await git.ensureIdentity()) {
+          warnings.push('git had no user.name/user.email, so this repo got a local "rmmz-kit <rmmz-kit@localhost>" identity — change it with `git config user.email`.');
+        }
+      })
       .then(() => git.add([target]))
       .then(() => git.commit('chore: create project'))
       .catch((err: Error) => {
