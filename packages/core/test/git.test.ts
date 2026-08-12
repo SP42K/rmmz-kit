@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { GitRepo } from '../src/git.js';
+
+const execFileAsync = promisify(execFile);
 
 /** Only the two branch helpers M9 added — the rest of GitRepo is covered through session.test.ts. */
 describe('GitRepo branch helpers', () => {
@@ -10,6 +14,16 @@ describe('GitRepo branch helpers', () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'rmmz-git-test-'));
     const git = new GitRepo(dir);
     await git.init();
+    // Same repo-local identity/signing config as testProject.ts, for the same
+    // reasons: CI runners have no global git identity, and commit.gpgsign=true
+    // on a dev machine blocks on a passphrase prompt.
+    for (const cfg of [
+      ['user.name', 'rmmz-kit test'],
+      ['user.email', 'test@example.invalid'],
+      ['commit.gpgsign', 'false'],
+    ]) {
+      await execFileAsync('git', ['config', ...cfg], { cwd: dir });
+    }
     return { dir, git };
   }
 
