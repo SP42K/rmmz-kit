@@ -190,7 +190,10 @@ whatever row already has that id (or a new row via `IdAllocator.allocEntityId`),
 .../Troop fields don't have the same "only makes sense together" coupling a page's fields do — and
 per-table Zod schemas for all thirteen tables is exactly the upfront modeling §4.5 says not to build
 ahead of need. M6.5 added Tilesets/Animations/MapInfos to that list — flat id-indexed arrays, so
-they cost one line each in `tables.ts` — and `update_system` for the one database file that isn't
+they cost one line each in `tables.ts` — with one guard: MapInfos rows may only be *edited*, never
+appended, because a row with no `Map###.json` is a map the game 404s on *and* is what
+`validate`'s `references/dangling-map` rule treats as proof the map exists (creating the file is
+`compose_map`'s job, M7). Plus `update_system` for the one database file that isn't
 a table: System.json is a single object, shallow-merged (nested fields like `terms` replaced whole).
 `update_system` deliberately does *not* reject unknown patch keys the way `upsert_map_event` does,
 because core's `SystemData` is a known subset of what MZ writes (`advanced`, `itemCategories`,

@@ -137,7 +137,7 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     'upsert_database',
     {
       description:
-        'Shallow-merge entries into a database table by id (Actors, Classes, Skills, Items, Weapons, Armors, Enemies, States, Troops, CommonEvents, Tilesets, Animations, MapInfos). Omit id to append a new row.',
+        'Shallow-merge entries into a database table by id (Actors, Classes, Skills, Items, Weapons, Armors, Enemies, States, Troops, CommonEvents, Tilesets, Animations, MapInfos). Omit id to append a new row — except for MapInfos, where only existing maps can be edited (a row without its Map###.json is an unloadable map).',
       inputSchema: { table: z.string(), entries: z.array(z.record(z.string(), z.unknown())) },
     },
     async ({ table, entries }) => {

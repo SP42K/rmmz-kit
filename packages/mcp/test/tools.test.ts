@@ -154,6 +154,21 @@ describe('tools', () => {
     expect(newFields).toEqual(['terms', 'gametitle']);
   });
 
+  it('upsertDatabase refuses a MapInfos row with no map file, but renames an existing map', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    // Appending would create a map the game 404s on — and would make
+    // validate's dangling-map check accept transfers to it.
+    expect(() => tools.upsertDatabase(session, 'mapInfos', [{ name: 'Cave' }])).toThrow(/no map file/);
+    expect(() => tools.upsertDatabase(session, 'mapInfos', [{ id: 7, name: 'Cave' }])).toThrow(/Map007\.json/);
+    expect(session.dirtyFiles()).toEqual([]);
+
+    tools.upsertDatabase(session, 'mapInfos', [{ id: 1, name: 'Field' }]);
+    expect(session.readFile<Array<{ name: string } | null>>('MapInfos.json')[1]!.name).toBe('Field');
+  });
+
   it('upsertDatabase edits a tileset passage flag (M6.5 acceptance)', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
