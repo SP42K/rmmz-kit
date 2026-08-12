@@ -32,7 +32,9 @@ scenario assertions, `AutoTest.js` — the browser half cannot be closed from
 inside this repo, see below). M9 / L6 done (`packages/agent`: the repair loop as
 a state machine the MCP client drives, plus the 20-bug corpus its acceptance
 names — the *repair rate* needs a model this process doesn't have, see below).
-L2 Tier 3 and everything from M10 onward not started.
+M10 done (`packages/gamegen`: spec → whole playable game, plus the walkthrough
+that proves it is finishable — the one-sentence-to-spec half is the MCP client's,
+see below). L2 Tier 3 and M11 (`deploy`, `create_project`) not started.
 
 ## Commands
 
@@ -47,6 +49,7 @@ npx tsc -p packages/battlesim/tsconfig.json --noEmit
 npx tsc -p packages/mapgen/tsconfig.json --noEmit
 npx tsc -p packages/playtest/tsconfig.json --noEmit
 npx tsc -p packages/agent/tsconfig.json --noEmit
+npx tsc -p packages/gamegen/tsconfig.json --noEmit
 npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
@@ -228,16 +231,23 @@ stdio entry point for a client like Claude Desktop: `npm run build`, then
 package's `exports` map defaults to `dist/` while the `rmmz-kit-source` custom condition (issue #7,
 resolved) keeps dev tooling on the TS sources — see Conventions.
 
-Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
-(`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 20 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `update_system`,
-`create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`, `manage_plugins`,
-`import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`, `run_scenario`,
-`repair`, `diff`, `commit`, `rollback`). §4.5's `coverage()` is *not* a twenty-first: coverage with
+Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 5 read resources
+(`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`,
+`rmmz://game-brief-guide`) plus 21 tools (`apply_script`, `upsert_map_event`, `upsert_database`,
+`update_system`, `create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`,
+`manage_plugins`, `import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`,
+`run_scenario`, `repair`, `generate_game`, `diff`, `commit`, `rollback`). §4.5's `coverage()` is
+*not* one of them: coverage with
 no scenario behind it is a table of zeroes, so it rides in `run_scenario`'s report instead. `simulate_battle`
 and `run_scenario` both run against the *in-memory* session, so an agent can ask "did that buff
 break the boss fight?" or "does the quest still complete?" about an edit it has not committed —
 `playtest` is the exception and serves what is on disk, because a browser reads files, not memory.
+
+`rmmz://game-brief-guide` (M10) is the odd resource out: the other four report what the project
+*contains*, this one is prose about how to write a `generate_game` spec and what to do with each
+way its report can come back unfinishable. It is a resource rather than a doc file because the
+half of it that matters is generated — the actor/enemy/item ids this particular project has, for
+the same reason §4.5 makes the asset catalog a resource.
 
 `apply_script` and `upsert_map_event` are deliberately split: `upsert_map_event` is a full-replace
 declarative write of one event's metadata + pages (conditions/trigger/image — nothing that makes
@@ -523,6 +533,69 @@ The **repair rate** (「≥ 靜態 8/10、動態 4/10」) is *not* measured, bec
 regenerating and there is no model in this test process; wiring one in would measure that model on
 that day, not this package. To close it: point `runRepairLoop`'s `generate` at a real model, run the
 same table, count. Nothing in `src/` needs to change.
+
+### Lv9 end-to-end (`packages/gamegen`)
+
+M10 is「一句話 → 30-60 分鐘可玩小 RPG」, and §3 M10 says up front that it is 編排與 prompt 工程,
+not new architecture. It is split the way every model-shaped milestone in this repo is split: the
+**plan** — which places exist, who wants what, what the boss is — needs a model, and in this
+architecture the model is the MCP client; everything downstream of the plan is deterministic and
+lives here.
+
+The contract between the two is `GameSpec` (`spec.ts`), a Zod schema whose every field carries a
+`.describe()` because **that schema is the prompt** — the same argument §4.5 makes for the asset
+catalog and `server.ts` makes for the scenario step union. `GameSpecSchema.shape` is spread
+directly into `generate_game`'s `inputSchema`, so there is exactly one copy of it.
+
+Four files, in the order a call moves through them:
+
+- `spec.ts` — the schema, plus `checkSpec()`: the ways a spec describes a game nobody could
+  finish, caught before a file is touched. A cycle in `requires` (neither quest can ever be
+  offered), an area no `connects` reaches (everything in it is unreachable), a dangling key.
+  `questOrder()` topologically sorts the quests, which is both the order the gates unlock in and
+  the order the walkthrough plays.
+- `build.ts` — spec → project, deterministically: one `composeMap` per area (M7 gives connectivity
+  by construction, so nothing here re-checks the inside of a map), a two-way portal pair per
+  `connects` edge, a three-page giver + two-page objective per quest, and a gated finale. Two
+  details worth knowing. **Placement is an allocator, not a formula** (`Placer`): two events on one
+  tile is legal MZ and always a bug, so tiles are handed out room-by-room, middle-first — an NPC in
+  a doorway is the one placement that can wall the player out. **The unconditional page must be
+  page 1**: MZ matches pages last-to-first, so an unconditional page anywhere else kills every page
+  above it, which `validate`'s `semantics/dead-event-page` reports as an error.
+- `walkthrough.ts` — the build's own regression suite, derived from the *spec* and not from the
+  events that were emitted. That is the whole point: a walkthrough read back out of the generated
+  data would agree with it by construction and prove nothing. Two scenarios, because "finishable"
+  and "not skippable" are different claims — `walkthrough` plays start to finish and asserts the
+  clear switch comes on; `gates` asserts every lock is still locked at the start (the finale
+  refuses, a gated giver refuses, and every objective event is inert — `activePage: 0` — until its
+  quest is running). Item counts are asserted against a running ledger rather than `>= 1`, because
+  a reward paid twice is exactly what a `gte` assertion is blind to.
+- `generate.ts` — the orchestration: `checkSpec` → `buildGame` → `validate` (L4) → `simulate` (L4.5)
+  → `runScenario` (L5). The three gates catch three different failures and none subsumes another —
+  and the battle gate is the one worth arguing for: `run_scenario` is *told* the outcome of a
+  battle, so a boss the party loses to every time is invisible to the event layer and is a wall.
+  Pre-existing validator findings are excused against a baseline taken before the build, for the
+  reason M9's loop takes one. Nothing is committed: every write went through `ProjectSession`, so
+  a caller who doesn't like the report rolls back and the project never saw it.
+
+Deliberately not done: decoration and sprites (generated events are invisible — this repo ships no
+art to point at, the same reason M7 has no prefabs), and any notion of *pacing* or *story*. The
+generator arranges content; it never invents an enemy, because designing one is a balance question
+`simulate_battle` answers.
+
+**Acceptance, honestly split** — the same shape as M6, M8 and M9. The plan asks for「連續 10 次生成，
+≥ 6 次可完整通關且不卡關」. `test/generate.test.ts` runs ten different games back to back — the area
+count, quest count, objective kinds and prerequisite chain all vary — and asserts **10/10**, not
+6/10, because the generator under test is deterministic; the plan's 6/10 budgets for a model
+writing the spec, and there is no model in this process. What is therefore *not* measured is
+whether a model turns an arbitrary English sentence into a spec worth generating, and whether the
+result is *fun* — `checkSpec` and the walkthrough between them prove a player can reach the end,
+not that they would want to. To close it: point a model at `rmmz://game-brief-guide`, give it ten
+briefs, and count how many of the resulting specs come back `ok`. Nothing in `src/` needs to change.
+
+The suite's teeth are pinned by their own test rather than assumed: breaking the turn-in (dropping
+the giver's `setSwitch done`, the most common generated-quest bug there is) must make the
+walkthrough fail and name that switch.
 
 ### Legacy JS carried over
 

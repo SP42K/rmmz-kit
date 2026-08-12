@@ -22,5 +22,6 @@ jobs:
       - run: npx tsc -p packages/mapgen/tsconfig.json --noEmit
       - run: npx tsc -p packages/playtest/tsconfig.json --noEmit
       - run: npx tsc -p packages/agent/tsconfig.json --noEmit
+      - run: npx tsc -p packages/gamegen/tsconfig.json --noEmit
       - run: npx tsc -p packages/mcp/tsconfig.json --noEmit
       - run: npx vitest run

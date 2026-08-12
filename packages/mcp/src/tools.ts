@@ -37,6 +37,7 @@ import {
   type ScenarioReport,
 } from '@rmmz-kit/playtest';
 import { RepairLoop, type RepairSpec } from '@rmmz-kit/agent';
+import { generateGame as generate, type GameSpec, type GenerateOptions } from '@rmmz-kit/gamegen';
 import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 /**
@@ -466,6 +467,38 @@ export async function repair(
       repairLoop = null;
       return { outcome: 'none' };
   }
+}
+
+/**
+ * `generate_game` (plan §3 M10): spec → whole playable project, then the three
+ * gates that decide whether it is 可完整通關且不卡關 — validate, simulate every
+ * generated fight, and play the generated walkthrough. Writes nothing to disk;
+ * the caller commits, or rolls back and tries another seed.
+ *
+ * The report is trimmed on the way out. A `ScenarioReport` carries the full
+ * step list, the final state and per-list coverage, which is the right payload
+ * for `run_scenario` (one scenario, asked for on purpose) and the wrong one
+ * here (two scenarios, returned whether or not anyone wanted them). What
+ * survives is the part a client acts on — plus `suite`, verbatim, because
+ * handing it to `repair` as the regression set is the intended next call and
+ * re-deriving it would mean re-running the generator.
+ */
+export async function generateGame(
+  session: ProjectSession,
+  spec: GameSpec,
+  options: GenerateOptions = {}
+): Promise<Record<string, unknown>> {
+  const { scenarios, ...report } = await generate(session, spec, options);
+  return {
+    ...report,
+    scenarios: scenarios.map((s) => ({
+      name: s.name,
+      pass: s.pass,
+      failures: s.failures,
+      unmodeled: s.unmodeled,
+      coverage: { percent: s.coverage.percent, messagePercent: s.coverage.messagePercent, unparsed: s.coverage.unparsed },
+    })),
+  };
 }
 
 export function commit(session: ProjectSession, message: string): Promise<string | null> {
