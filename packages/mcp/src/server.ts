@@ -71,6 +71,20 @@ const scenarioStep = z.discriminatedUnion('action', [
   }),
 ]);
 
+/**
+ * One scenario, as `run_scenario`'s whole input and as one element of
+ * `repair`'s regression suite. Shared rather than copied: two copies of this
+ * shape drift, and the descriptions are the instruction manual (above).
+ */
+const scenarioShape = {
+  name: z.string().optional(),
+  steps: z.array(scenarioStep).min(1),
+  choices: z.array(z.number().int()).optional().describe('Show Choices answers, in order; -1 takes the cancel branch'),
+  battles: z.array(z.enum(['win', 'escape', 'lose'])).optional().describe('Battle Processing outcomes, in order (default win)'),
+  maxCommands: z.number().int().min(1).optional().describe('Abort guard for a runaway event loop'),
+  newGame: z.boolean().optional().describe("Start from System.json's new-game party/position (default) or from nothing"),
+};
+
 function registerResources(server: McpServer, session: ProjectSession): void {
   server.registerResource(
     'project-summary',
@@ -438,14 +452,7 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     {
       description:
         'Run a headless event-layer scenario against the current in-memory data and report every assertion, the messages shown, the final state and event coverage. Runs event commands, not frames — no rendering, movement or battle math (use simulate_battle for that).',
-      inputSchema: {
-        name: z.string().optional(),
-        steps: z.array(scenarioStep).min(1),
-        choices: z.array(z.number().int()).optional().describe('Show Choices answers, in order; -1 takes the cancel branch'),
-        battles: z.array(z.enum(['win', 'escape', 'lose'])).optional().describe('Battle Processing outcomes, in order (default win)'),
-        maxCommands: z.number().int().min(1).optional().describe('Abort guard for a runaway event loop'),
-        newGame: z.boolean().optional().describe("Start from System.json's new-game party/position (default) or from nothing"),
-      },
+      inputSchema: scenarioShape,
     },
     async (scenario) => json(tools.runScenarioTool(session, scenario))
   );
@@ -458,7 +465,7 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       inputSchema: {
         action: z.enum(['start', 'check', 'status', 'abort']).optional().describe('Defaults to check'),
         scenarios: z
-          .array(z.object({ name: z.string().optional(), steps: z.array(scenarioStep).min(1), choices: z.array(z.number().int()).optional(), battles: z.array(z.enum(['win', 'escape', 'lose'])).optional(), maxCommands: z.number().int().min(1).optional(), newGame: z.boolean().optional() }))
+          .array(z.object(scenarioShape))
           .optional()
           .describe('The regression suite (start only). Every attempt runs all of it, not just the one that failed'),
         maxAttempts: z.number().int().min(1).max(10).optional().describe('Repair attempts before giving up (default 3)'),

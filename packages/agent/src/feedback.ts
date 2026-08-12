@@ -72,8 +72,9 @@ export function formatSummary(
 function staticBody(attempt: RepairAttempt): string[] {
   const lines = ['STATIC GATE — L4 validator rejected the project:'];
   for (const [i, f] of attempt.blocking.slice(0, MAX_FINDINGS).entries()) {
+    const where = locate(f);
     lines.push(`  ${i + 1}. [${f.rule}] ${f.message}`);
-    lines.push(`     ${f.file}${f.path ? ` at ${f.path}` : ''}${locate(f) ? ` — edit ${locate(f)}` : ''}`);
+    lines.push(`     ${f.file}${f.path ? ` at ${f.path}` : ''}${where ? ` — edit ${where}` : ''}`);
   }
   if (attempt.blocking.length > MAX_FINDINGS) {
     lines.push(`  ... and ${attempt.blocking.length - MAX_FINDINGS} more of the same kind.`);
@@ -89,7 +90,11 @@ function staticBody(attempt: RepairAttempt): string[] {
 
 function dynamicBody(attempt: RepairAttempt, previous?: RepairAttempt): string[] {
   const lines: string[] = [];
-  for (const report of attempt.scenarios) {
+  // Paired by index, not by name: `runScenario` defaults an unnamed scenario's
+  // name to the literal 'scenario', and the MCP schema makes the name optional,
+  // so matching on it would diff scenario 2 against scenario 1's previous run.
+  // Every attempt runs the same suite in the same order, so the index is exact.
+  for (const [i, report] of attempt.scenarios.entries()) {
     if (report.pass) {
       lines.push(`SCENARIO "${report.name}" — passed.`);
       continue;
@@ -99,14 +104,15 @@ function dynamicBody(attempt: RepairAttempt, previous?: RepairAttempt): string[]
     lines.push(`  trajectory: ${trajectory(report)}`);
     if (report.messages.length > 0) lines.push(`  messages shown: ${messages(report)}`);
 
-    const diff = stateDiff(previous?.scenarios.find((r) => r.name === report.name), report);
+    const before = previous?.scenarios[i];
+    const diff = stateDiff(before, report);
     if (diff.length > 0) {
       lines.push(`  state changed since ${label(previous!.n)}:`);
       for (const line of diff.slice(0, MAX_DIFF)) lines.push(`    ${line}`);
       if (diff.length > MAX_DIFF) lines.push(`    ... and ${diff.length - MAX_DIFF} more keys.`);
-    } else if (previous && previous.scenarios.some((r) => r.name === report.name)) {
+    } else if (before) {
       // The single most useful line in the whole report: the edit did nothing.
-      lines.push(`  state is identical to ${label(previous.n)} — your last edit changed nothing this scenario reads.`);
+      lines.push(`  state is identical to ${label(previous!.n)} — your last edit changed nothing this scenario reads.`);
     }
 
     if (report.unmodeled.length > 0) {

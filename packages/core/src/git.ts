@@ -45,14 +45,25 @@ export class GitRepo {
     return (await this.run(['rev-parse', 'HEAD'])).trim();
   }
 
-  /** Current branch name, or 'HEAD' when detached. Returns 'HEAD' on an unborn branch too. */
+  /**
+   * Current branch name, or '' when detached. `--show-current`, not
+   * `rev-parse --abbrev-ref HEAD`: the latter exits 128 on an unborn branch
+   * (a repo that has been `git init`ed but never committed, which is a state
+   * `openProject` accepts), so it would reject rather than answer.
+   */
   async currentBranch(): Promise<string> {
-    return (await this.run(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+    return (await this.run(['branch', '--show-current'])).trim();
   }
 
-  /** Create a branch at HEAD and switch to it, carrying the working tree over (M9's optional repair-branch isolation). */
+  /** Switch to `name`, creating it at HEAD if it doesn't exist yet (M9's optional repair-branch isolation). */
   async checkoutNew(name: string): Promise<void> {
-    await this.run(['checkout', '-b', name]);
+    // `checkout -b` fails outright on a branch that already exists, which a
+    // second repair run onto the same branch name hits routinely. `-B` is not
+    // the fix — it would reset someone else's branch to HEAD.
+    const exists = await this.run(['rev-parse', '--verify', '--quiet', `refs/heads/${name}`])
+      .then((out) => out.trim().length > 0)
+      .catch(() => false);
+    await this.run(['checkout', ...(exists ? [] : ['-b']), name]);
   }
 
   /** True if there are no staged/unstaged changes and nothing untracked under `paths`. */

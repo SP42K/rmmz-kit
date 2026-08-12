@@ -133,8 +133,12 @@ export class RepairLoop {
    * attempt, and never terminates the loop.
    */
   async start(): Promise<RepairResult> {
-    this.baseline = new Set(keysOf(await validateProject(this.session)));
-    const attempt = await this.grade(0);
+    // One validator pass, used twice: it decompiles every command list in the
+    // project, and grading attempt 0 against a baseline taken from a *second*
+    // pass over the same unchanged session would only pay for that twice.
+    const findings = await validateProject(this.session);
+    this.baseline = new Set(keysOf(findings));
+    const attempt = this.grade(0, findings);
     return this.record(attempt.ok ? 'clean' : 'repairing', attempt);
   }
 
@@ -145,7 +149,7 @@ export class RepairLoop {
     if (this.finished) return this.last!;
     if (this.last === null) await this.start();
 
-    const attempt = await this.grade(this.attempts.filter((a) => a.n > 0).length + 1);
+    const attempt = this.grade(this.attempts.filter((a) => a.n > 0).length + 1, await validateProject(this.session));
 
     if (attempt.ok) return this.record('converged', attempt, await this.commit(attempt));
 
@@ -162,8 +166,7 @@ export class RepairLoop {
     return this.last;
   }
 
-  private async grade(n: number): Promise<RepairAttempt> {
-    const findings = await validateProject(this.session);
+  private grade(n: number, findings: Finding[]): RepairAttempt {
     const relevant = findings.filter((f) => !this.baseline.has(keyOf(f)));
     const blocking = relevant.filter((f) => SEVERITY_RANK[f.severity] <= this.blockRank);
     const warnings = relevant.filter((f) => SEVERITY_RANK[f.severity] > this.blockRank);
@@ -193,8 +196,8 @@ export class RepairLoop {
     let branch: string | undefined;
     if (this.spec.branch && (await git.isRepo())) {
       // Switch before the write, not after: the point is that the converged
-      // data lands on that branch, and `git checkout -b` carries the working
-      // tree over anyway (nothing is on disk yet — this session commits once).
+      // data lands on that branch, and `git checkout` carries the working tree
+      // over anyway (nothing is on disk yet — this session commits once).
       if ((await git.currentBranch()) !== this.spec.branch) await git.checkoutNew(this.spec.branch);
       branch = this.spec.branch;
     }
@@ -255,7 +258,10 @@ function keysOf(findings: Finding[]): string[] {
 function signatureOf(blocking: Finding[], scenarios: ScenarioReport[]): string {
   const keys = [
     ...keysOf(blocking),
-    ...scenarios.filter((r) => !r.pass).flatMap((r) => r.failures.map((f) => `${r.name}|${f}`)),
+    // Keyed by suite position, not by name: an unnamed scenario reports as the
+    // literal 'scenario', so two of them would share a key and two different
+    // failures could collapse into one signature.
+    ...scenarios.flatMap((r, i) => (r.pass ? [] : r.failures.map((f) => `${i}|${r.name}|${f}`))),
   ];
   return keys.sort().join('\n');
 }

@@ -458,8 +458,10 @@ export async function repair(
     case 'check':
       if (!repairLoop) throw new Error('No repair loop is running — call repair with action "start" first.');
       return { ...(await repairLoop.check()) };
-    case 'status':
-      return repairLoop?.status() ? { ...repairLoop.status()! } : { outcome: 'none' };
+    case 'status': {
+      const status = repairLoop?.status();
+      return status ? { ...status } : { outcome: 'none' };
+    }
     case 'abort':
       repairLoop = null;
       return { outcome: 'none' };
