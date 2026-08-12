@@ -12,7 +12,20 @@ import { IdAllocator, mapFileName } from '@rmmz-kit/core';
 import { compile, parseDsl } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
 import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesim';
-import { DATABASE_TABLES } from './tables.js';
+import {
+  composeMap,
+  createMap,
+  paintTiles,
+  resizeMap,
+  setTileFlags,
+  type ComposeResult,
+  type ComposeSpec,
+  type CreateMapSpec,
+  type PaintSpec,
+  type ResizeResult,
+  type TileFlagSpec,
+} from '@rmmz-kit/mapgen';
+import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 /**
  * MCP write/transaction tools (plan §4.5). Each is a plain function over a
@@ -210,7 +223,12 @@ export function upsertDatabase(
         throw new Error(`Invalid id ${JSON.stringify(id)} for ${table}: ids must be integers >= 1`);
       }
       while (data.length <= id) data.push(null);
-      data[id] = { ...(data[id] ?? {}), ...entry, id };
+      // Defaults apply only where there is no row yet — merging them onto an
+      // existing row would undo edits, and they exist for exactly one reason:
+      // a table whose rows carry an invariant a shallow merge can't supply
+      // (Tilesets' 8192-long `flags`, M6.5 gap #1).
+      const base = data[id] ?? NEW_ROW_DEFAULTS[file]?.() ?? {};
+      data[id] = { ...base, ...entry, id };
       ids.push(id);
     }
   });
@@ -240,6 +258,36 @@ export function updateSystem(session: ProjectSession, patch: Record<string, unkn
     return { ...data, ...patch };
   });
   return { newFields };
+}
+
+/**
+ * L3.5 map tools (plan §4.5 `create_map`/`resize_map`/`paint_tiles`/`compose_map`,
+ * M7). All four are one-liners into `@rmmz-kit/mapgen` for the same reason the
+ * rest of this file is one-liners into core/compiler/validate — decision A.
+ */
+export function createMapTool(session: ProjectSession, spec: CreateMapSpec): { id: number } {
+  return { id: createMap(session, spec) };
+}
+
+export function resizeMapTool(
+  session: ProjectSession,
+  mapId: number,
+  width: number,
+  height: number
+): ResizeResult {
+  return resizeMap(session, mapId, width, height);
+}
+
+export function paintTilesTool(session: ProjectSession, spec: PaintSpec): void {
+  paintTiles(session, spec);
+}
+
+export function setTileFlagsTool(session: ProjectSession, tilesetId: number, tiles: TileFlagSpec[]): void {
+  setTileFlags(session, tilesetId, tiles);
+}
+
+export function composeMapTool(session: ProjectSession, spec: ComposeSpec): ComposeResult {
+  return composeMap(session, spec);
 }
 
 export function allocateNamespace(

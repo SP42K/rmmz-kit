@@ -184,6 +184,50 @@ describe('tools', () => {
     expect(tileset.name).toBe('Field'); // shallow merge, not replace
   });
 
+  it('upsertDatabase gives an appended tileset the flags array MZ indexes (M6.5 gap #1)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const [id] = tools.upsertDatabase(session, 'tilesets', [{ name: 'Cave' }]);
+    const tileset = session.readFile<Array<{ flags: number[]; tilesetNames: string[]; name: string } | null>>(
+      'Tilesets.json'
+    )[id]!;
+
+    // Without this, Game_Map.checkPassage reads flags[tileId] === undefined and
+    // the player's first step throws.
+    expect(tileset.flags).toHaveLength(8192);
+    expect(tileset.tilesetNames).toHaveLength(9);
+    expect(tileset.name).toBe('Cave');
+
+    // Defaults are for new rows only — they must not undo an existing row's data.
+    tools.upsertDatabase(session, 'tilesets', [{ id: 1, note: 'edited' }]);
+    const existing = session.readFile<Array<{ flags: number[]; name: string } | null>>('Tilesets.json')[1]!;
+    expect(existing.name).toBe('Field');
+    expect(existing.flags[24]).toBe(15);
+  });
+
+  it('map tools compose, paint and resize through the same session (M7)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const { id } = tools.createMapTool(session, { name: 'Cave', width: 12, height: 10 });
+    expect(id).toBe(2);
+
+    tools.paintTilesTool(session, { mapId: id, ops: [{ x: 0, y: 0, width: 12, height: 10, tileId: 2816 }] });
+    tools.setTileFlagsTool(session, 1, [{ tileId: 2816, passage: { down: true, left: true, right: true, up: true } }]);
+    tools.upsertMapEvent(session, id, { name: 'Sign', x: 11, y: 9, pages: [{ trigger: 0 }] });
+
+    expect(tools.resizeMapTool(session, id, 8, 8)).toEqual({ outOfBoundsEvents: [1] });
+    expect(session.readFile<MapData>('Map002.json').data).toHaveLength(8 * 8 * 6);
+
+    const composed = tools.composeMapTool(session, { name: 'Dungeon', seed: 5 });
+    expect(composed.mapId).toBe(3);
+    expect(composed.regionSizes).toHaveLength(1);
+    expect(tools.diff(session)).toEqual(expect.arrayContaining(['Map002.json', 'Map003.json', 'MapInfos.json']));
+  });
+
   it('simulateBattle reports on uncommitted data', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

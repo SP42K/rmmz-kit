@@ -39,6 +39,11 @@ describe('MCP server wiring', () => {
         'validate',
         'simulate_battle',
         'update_system',
+        'create_map',
+        'resize_map',
+        'paint_tiles',
+        'set_tile_flags',
+        'compose_map',
         'diff',
         'commit',
         'rollback',
@@ -146,6 +151,63 @@ describe('MCP server wiring', () => {
     expect(written[1]!.flags[48]).toBe(15);
     expect(written[1]!.flags).toHaveLength(8192);
     expect(written[1]!.name).toBe('Field');
+  });
+
+  /**
+   * M7's acceptance scenario, end to end over the protocol: generate a map,
+   * put an NPC in one of its rooms, make sure the player can reach them, and
+   * commit — the whole "new map, painted, passable, opens in the editor" chain.
+   */
+  it('composes a map, places an event in a room and commits it', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const client = await connectedClient(await openProject(dir));
+
+    const composed = text(
+      await client.callTool({
+        name: 'compose_map',
+        arguments: { name: 'Herb Cave', width: 27, height: 21, seed: 3 },
+      })
+    ) as { mapId: number; rooms: Array<{ x: number; y: number; width: number; height: number }>; regionSizes: number[] };
+
+    expect(composed.mapId).toBe(2);
+    expect(composed.regionSizes).toHaveLength(1);
+    expect(composed.rooms.length).toBeGreaterThan(1);
+
+    const room = composed.rooms[0];
+    await client.callTool({
+      name: 'upsert_map_event',
+      arguments: { mapId: composed.mapId, name: 'Hermit', x: room.x, y: room.y, pages: [{ trigger: 0 }] },
+    });
+    await client.callTool({
+      name: 'apply_script',
+      arguments: { target: { map: composed.mapId, event: 1, page: 1 }, dsl: 'say: The herb grows deeper in.\n' },
+    });
+
+    // A region id painted over the room, to prove the non-tile layers round-trip.
+    await client.callTool({
+      name: 'paint_tiles',
+      arguments: { mapId: composed.mapId, layer: 5, ops: [{ ...room, tileId: 1 }] },
+    });
+
+    const committed = text(await client.callTool({ name: 'commit', arguments: { message: 'feat: herb cave' } })) as {
+      commit: string;
+    };
+    expect(committed.commit).toMatch(/^[0-9a-f]{40}$/);
+
+    const reopened = await connectedClient(await openProject(dir));
+    const map = JSON.parse(
+      ((await reopened.readResource({ uri: `rmmz://map/${composed.mapId}` })).contents[0] as { text: string }).text
+    ) as { width: number; height: number; data: number[]; events: Array<{ name: string } | null> };
+    expect(map.width).toBe(27);
+    expect(map.data).toHaveLength(27 * 21 * 6);
+    expect(map.events[1]!.name).toBe('Hermit');
+    expect(map.data[(5 * 21 + room.y) * 27 + room.x]).toBe(1);
+
+    const infos = JSON.parse(
+      ((await reopened.readResource({ uri: 'rmmz://database/mapInfos' })).contents[0] as { text: string }).text
+    ) as Array<{ name: string } | null>;
+    expect(infos[2]!.name).toBe('Herb Cave');
   });
 
   it('reports a tool error instead of throwing when applying a script to a nonexistent page', async () => {
