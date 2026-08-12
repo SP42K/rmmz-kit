@@ -52,6 +52,8 @@ describe('MCP server wiring', () => {
         'run_scenario',
         'repair',
         'generate_game',
+        'deploy',
+        'create_project',
         'diff',
         'commit',
         'rollback',

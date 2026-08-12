@@ -77,8 +77,8 @@ v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在�
 | 素材：匯入 | `import_asset` | ✓ | M7.6 已交付 |
 | 測試遊玩（起遊戲給人玩） | `playtest`（http server + 瀏覽器） | ✓ | M8 已交付 |
 | headless 測試 / 斷言 | `run_scenario`（事件層）＋ `AutoTest.js` | △ 事件層 ✓、跑畫面 ✗（§6 R2 降級，理由見 M8 實作結果） | M8 已交付 |
-| 部署匯出（web / Windows、未用素材剔除） | `deploy` | ✗ | M11 |
-| 新建專案 | `create_project`（fixture 為模板） | ✗ | M11 |
+| 部署匯出（web / Windows、未用素材剔除） | `deploy` | ✓（Windows 殼需自備 NW.js） | M11 已交付 |
+| 新建專案 | `create_project`（`templates/blank-project` 為模板） | ✓（引擎與素材需 `runtimeFrom`） | M11 已交付 |
 
 ---
 
@@ -591,6 +591,23 @@ plan → generate(DSL) → compile → validate
 **驗收**：對 fixture deploy 出的 web 包可在瀏覽器完整遊玩；`create_project` 產出的專案
 編輯器可直接開啟。
 
+**實作結果**（見 `CLAUDE.md`「M11 deploy and project creation」）：兩者都放進 `packages/core`
+（本節自己說只依賴 L0/L1，而套件在本 repo 對應的是「層」，這兩個都不是）。三個與本節不同的決定：
+
+- **素材剔除不走 `RefIndex`**。`RefIndex` 索引的是數字 id，素材參照是字串，且大多不在事件裡
+  （角色的 `faceName`、圖塊組的 `tilesetNames`、System 的標題畫面與 24 個系統 SE）。改成
+  「收集 `data/*.json` 裡的每一個字串，檔名（去副檔名）對得上就保留」——會多留（叫 Slime 的
+  道具會留下 `img/enemies/Slime.png`），而多留是唯一能錯的方向：多留是幾 KB，誤刪是玩家面前
+  一張永遠載不出來的圖。
+- **Windows 殼需自備 NW.js**（`nwPath`）：本 repo 不下載也不散布第三方執行檔，與 M8 撞到的是
+  同一道牆。
+- **模板不是 fixture**，是新的 `templates/blank-project`。fixture 是刻意最小化的測試輸入
+  （4 個欄位的 System.json、一條結構壞掉的事件命令列），那些不該進到人要動工的專案裡。
+
+驗收的右半邊（瀏覽器完整遊玩、編輯器開得起來）在此 repo 內無法成立——引擎與編輯器都是付費品。
+可檢查的那半有做：產出的專案 `openProject` 開得起來且 `validateProject` 零 error，deploy 出的
+包用 playtest server 服務得起來、`data/System.json` 取得回正確標題、`Game.rmmzproject` 404。
+
 ---
 
 ### 3.1 總表
@@ -791,7 +808,9 @@ MZ 的 **357 插件指令是結構化的**（plugin name + command key + 具名�
 
 **事務 / 專案**
 - `commit(message)`、`rollback()`、`diff()`
-- `create_project(template)` / `deploy(target)` — **M11**，目前不存在
+- `create_project(template)` / `deploy(target)` — **M11 已交付**（`packages/core` 的
+  `createProject` / `deployProject`）。`deploy` 與 `playtest` 一樣做磁碟上的東西，未 commit 的
+  改動會在報告裡被點名；`create_project` 是唯一不碰當前 session 的工具（它建的是另一個專案）
 
 ### 4.6 為什麼不能走 rein 的 playtest 路線
 
@@ -862,9 +881,11 @@ M0–M8 已完成（見 `CLAUDE.md` status；M8 是照 §6 R2 降級成事件層
    `update_system`，半週。
 3. **M7 地圖**：先做 L0 create-file 前置，再 `create_map` / `paint_tiles` / autotile /
    通行度，後半接原地圖合成。
-4. ~~**M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）**~~：已完成。剩下
-   **M9 repair loop → M10 端到端 → M11 部署**，順序見 §3.1。M9 的迴歸測試集與失敗軌跡回饋
-   直接吃 `run_scenario` 的報告（`failures` / `state` / `coverage`），不需要新介面。
+4. ~~**M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）→ M9 repair loop →
+   M10 端到端 → M11 部署**~~：已完成，M0–M11 全數交付。剩下的只有 L2 Tier 3，以及各
+   milestone 那些需要付費編輯器／真實模型才能收尾的驗收右半邊（M6 勝率誤差、M8 跑畫面、
+   M9 修復率、M10 一句話成規格、M11 瀏覽器通關與編輯器開啟）——每一項的收尾步驟都寫在
+   `CLAUDE.md` 對應段落的「Acceptance, honestly split」裡，且都不需要改 `src/`。
 5. **M8 的瀏覽器半邊**：要在真實授權專案上補（見 M8 「實作結果」的缺口表）。這是唯一一個
    「本 repo 內做不完」的項目，不是待辦而是前提。
 6. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。`playtest`

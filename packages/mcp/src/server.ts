@@ -513,6 +513,43 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   );
 
   server.registerTool(
+    'deploy',
+    {
+      description:
+        'Export a shippable package: copy the project to outDir, minus the editor project file, save data and (by ' +
+        'default) every img//audio/ file nothing in the project refers to. Copies what is on disk, so commit first. ' +
+        'Target "windows" wraps the same bundle in an NW.js shell you supply via nwPath (this tool cannot download one).',
+      inputSchema: {
+        outDir: z.string().describe('Where to write the package. Must be outside the project, and empty unless overwrite'),
+        target: z.enum(['web', 'windows']).optional().describe('Defaults to web'),
+        excludeUnusedAssets: z.boolean().optional().describe('Prune unreferenced img//audio/ files (default true)'),
+        nwPath: z.string().optional().describe('Unpacked NW.js distribution (nw.exe and its libraries), required by target windows'),
+        overwrite: z.boolean().optional().describe('Write into a non-empty outDir instead of refusing'),
+      },
+    },
+    async (options) => json(await tools.deploy(session, options))
+  );
+
+  server.registerTool(
+    'create_project',
+    {
+      description:
+        'Create a new MZ project from the blank template at `path` (must be empty), git-initialised and ready for ' +
+        'openProject. This is the one tool that does not touch the currently open project — reopen the server ' +
+        'against the new path to edit it. Without runtimeFrom the result has data but no engine or art (those ship ' +
+        'with the editor), so it opens as a project but will not boot.',
+      inputSchema: {
+        path: z.string().describe('Directory to create the project in — must not exist, or be empty'),
+        title: z.string().optional().describe("The game title, written to System.json's gameTitle"),
+        templatePath: z.string().optional().describe('Override the bundled blank-project template'),
+        runtimeFrom: z.string().optional().describe('An installed MZ project to copy js/, img/, audio/, fonts/ from (its plugin list is not copied)'),
+        git: z.boolean().optional().describe('git init + initial commit (default true)'),
+      },
+    },
+    async ({ path, ...options }) => json(await tools.createProjectTool(path, options))
+  );
+
+  server.registerTool(
     'diff',
     { description: 'List data files that would be written by commit() right now.' },
     async () => json({ files: tools.diff(session) })
