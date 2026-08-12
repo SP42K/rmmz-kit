@@ -53,6 +53,11 @@ describe('createProject', () => {
     for (const field of ['terms', 'sounds', 'partyMembers', 'startMapId', 'switches', 'variables', 'attackMotions', 'boat']) {
       expect(system[field]).toBeDefined();
     }
+    // Not in core's SystemData, but the runtime dereferences them without a
+    // nullcheck: Scene_Boot.resizeScreen reads advanced.screenWidth on the
+    // first frame, Window_ItemCategory indexes itemCategories.
+    expect(system.advanced).toMatchObject({ screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 });
+    expect(system.itemCategories).toHaveLength(4);
     expect(system.terms.messages.actorDamage).toBeTruthy();
     expect(system.sounds).toHaveLength(24);
     // Silent, not plausible: a default filename would dangle (no audio ships here).

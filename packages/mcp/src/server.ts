@@ -524,7 +524,7 @@ function registerTools(server: McpServer, session: ProjectSession): void {
         target: z.enum(['web', 'windows']).optional().describe('Defaults to web'),
         excludeUnusedAssets: z.boolean().optional().describe('Prune unreferenced img//audio/ files (default true)'),
         nwPath: z.string().optional().describe('Unpacked NW.js distribution (nw.exe and its libraries), required by target windows'),
-        overwrite: z.boolean().optional().describe('Write into a non-empty outDir instead of refusing'),
+        overwrite: z.boolean().optional().describe('Delete a non-empty outDir and write a fresh package, instead of refusing'),
       },
     },
     async (options) => json(await tools.deploy(session, options))

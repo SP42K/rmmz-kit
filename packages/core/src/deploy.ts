@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { assertProjectRoot, listDataFiles } from './io/projectRoot.js';
@@ -27,7 +27,7 @@ export interface DeployOptions {
   excludeUnusedAssets?: boolean;
   /** An unpacked NW.js distribution (nw.exe + its libraries). Required by target 'windows'. */
   nwPath?: string;
-  /** Write into a non-empty outDir instead of refusing. */
+  /** Replace a non-empty outDir instead of refusing. Its previous contents are deleted. */
   overwrite?: boolean;
 }
 
@@ -48,7 +48,7 @@ export interface DeployReport {
  * and shipping the developer's save files is how a test playthrough ends up in
  * a release. `.git`/`node_modules` are this toolchain's, not the game's.
  */
-const EXCLUDED = new Set(['.git', '.gitignore', 'node_modules', 'save', 'Game.rmmzproject']);
+const EXCLUDED = new Set(['.git', '.gitignore', 'node_modules', 'save', 'game.rmmzproject']);
 
 /** MZ hardcodes these filenames (IconSet, Window, Balloon, Damage, …), so nothing in data/ refers to them. */
 const NEVER_PRUNE = ['img/system/'];
@@ -68,23 +68,46 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
   if (relToRoot === '' || (!relToRoot.startsWith('..') && !path.isAbsolute(relToRoot))) {
     throw new Error(`Deploy output must be outside the project: ${outDir}`);
   }
+  // And not the other way round either, now that `overwrite` deletes what it
+  // finds: deploying D:/project into D:/ used to merely litter, and would now
+  // take the project with it.
+  const relToOut = path.relative(outDir, root);
+  if (!relToOut.startsWith('..') && !path.isAbsolute(relToOut)) {
+    throw new Error(`Deploy output must not contain the project: ${outDir}`);
+  }
   await assertEmpty(outDir, options.overwrite ?? false);
 
   const gameDir = target === 'windows' ? path.join(outDir, 'www') : outDir;
   const report: DeployReport = { target, outDir, files: 0, bytes: 0, pruned: [], warnings: [] };
 
+  // The reference scan can refuse the whole deploy (an unparseable data file),
+  // so it runs before anything is written — otherwise a failed windows deploy
+  // leaves a few hundred MB of NW.js runtime in outDir and no game.
+  const keep = (options.excludeUnusedAssets ?? true) ? await referencedNames(root, report) : null;
+
+  // Replace, don't merge: a redeploy after deleting an actor lists that actor's
+  // face in `report.pruned` while the previous build's copy is still sitting in
+  // outDir, so the report and the directory that actually ships disagree. Runs
+  // after the scan above, for the reason that scan runs first — a refused deploy
+  // must leave the previous build intact.
+  if (options.overwrite) await rm(outDir, { recursive: true, force: true });
+
   if (target === 'windows') {
     await copyNwShell(root, outDir, options.nwPath, report);
   }
 
-  const keep = (options.excludeUnusedAssets ?? true) ? await referencedNames(root, report) : null;
   await mkdir(gameDir, { recursive: true });
   await cp(root, gameDir, {
     recursive: true,
     filter: (src) => {
       const rel = relative(root, src);
       if (rel === '') return true;
-      if (EXCLUDED.has(rel.split('/')[0]) || rel.endsWith('.rmmzsave')) return false;
+      // Matched case-insensitively, for the same reason `findProjectFile` looks
+      // for the marker that way: `Game.rmmzproject` is what the editor writes,
+      // but a lowercase one is a project this toolchain accepts — and shipping
+      // it is exactly what this exclusion exists to prevent.
+      const lower = rel.toLowerCase();
+      if (EXCLUDED.has(lower.split('/')[0]) || lower.endsWith('.rmmzsave')) return false;
       const stats = statSync(src);
       if (stats.isDirectory()) return true;
       if (keep && isPrunable(rel) && !keep.has(assetKey(rel))) {
@@ -110,7 +133,7 @@ async function assertEmpty(outDir: string, overwrite: boolean): Promise<void> {
     throw err;
   });
   if (entries.length > 0) {
-    throw new Error(`Deploy output directory is not empty: ${outDir} (pass overwrite to write into it anyway)`);
+    throw new Error(`Deploy output directory is not empty: ${outDir} (pass overwrite to replace its contents)`);
   }
 }
 

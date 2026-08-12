@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { deployProject } from '../src/deploy.js';
@@ -57,6 +57,19 @@ describe('deployProject', () => {
     expect(report.bytes).toBeGreaterThan(0);
   });
 
+  it('drops the project marker whatever its case', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    // assertProjectRoot accepts a lowercase marker on purpose, so deploy has to
+    // exclude it on the same terms — otherwise the build reopens as a project.
+    await rename(path.join(dir, 'Game.rmmzproject'), path.join(dir, 'game.rmmzproject'));
+    const out = await outDir();
+
+    await deployProject(dir, { outDir: out });
+
+    expect(await listTree(out)).not.toContain('game.rmmzproject');
+  });
+
   it('excludeUnusedAssets false keeps every asset', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
@@ -97,6 +110,40 @@ describe('deployProject', () => {
     await writeFile(path.join(out, 'old.txt'), 'x');
     await expect(deployProject(dir, { outDir: out })).rejects.toThrow(/not empty/);
     await expect(deployProject(dir, { outDir: out, overwrite: true })).resolves.toBeTruthy();
+
+    // The other direction matters once overwrite deletes: deploying into an
+    // ancestor of the project would take the project with it.
+    await expect(deployProject(dir, { outDir: path.dirname(dir) })).rejects.toThrow(/must not contain the project/);
+  });
+
+  it('overwrite replaces the previous build instead of merging into it', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    await addAssets(dir);
+    const out = await outDir();
+
+    await deployProject(dir, { outDir: out, excludeUnusedAssets: false });
+    expect(await listTree(out)).toContain('img/faces/Unused.png');
+
+    // A file the first build shipped and the second prunes must be gone, or
+    // report.pruned and the directory that ships disagree.
+    const report = await deployProject(dir, { outDir: out, overwrite: true });
+
+    expect(report.pruned).toContain('img/faces/Unused.png');
+    expect(await listTree(out)).not.toContain('img/faces/Unused.png');
+    expect(await listTree(out)).toContain('img/faces/Actor1.png');
+  });
+
+  it('leaves the previous build alone when overwrite deploy is refused', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const out = await outDir();
+
+    await deployProject(dir, { outDir: out });
+    await writeFile(path.join(dir, 'data', 'Items.json'), '[null, {broken');
+
+    await expect(deployProject(dir, { outDir: out, overwrite: true })).rejects.toThrow(/not valid JSON/);
+    expect(await listTree(out)).toContain('data/System.json');
   });
 
   it('windows: needs an NW.js shell, then puts the game in www/ beside a renamed executable', async () => {

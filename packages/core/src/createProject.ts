@@ -25,6 +25,12 @@ import type { SystemData } from './types/mz.js';
  *   not copied from the editor. Every asset-name field in it is empty rather
  *   than a plausible default filename, because this repo ships no art or audio
  *   and a plausible name would be a dangling reference the validator reports.
+ *   `types/mz.ts` is only a *subset* of what MZ writes, so the template also
+ *   carries the fields the engine dereferences without a nullcheck and the type
+ *   doesn't model — `advanced` (`Scene_Boot.resizeScreen` reads
+ *   `advanced.screenWidth` on the first frame) and `itemCategories`
+ *   (`Window_ItemCategory.needsCommand` indexes it) chief among them. A project
+ *   missing those opens fine and crashes on boot.
  *
  * Which is the same wall M8 hit: `js/` (the MZ runtime), `img/`, `audio/` and
  * `fonts/` ship with the editor, so a project created from the bundled template
@@ -137,7 +143,9 @@ async function setTitle(target: string, title: string): Promise<void> {
   const indexPath = path.join(target, 'index.html');
   const html = await readFile(indexPath, 'utf-8').catch(() => null);
   if (html) {
-    await writeFile(indexPath, html.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(title)}</title>`), 'utf-8');
+    // Replacer *function*: a string replacement would interpret `$&`/`$'` in
+    // the title as match-substitution patterns and splice the old title back in.
+    await writeFile(indexPath, html.replace(/<title>[^<]*<\/title>/, () => `<title>${escapeHtml(title)}</title>`), 'utf-8');
   }
 }
 
