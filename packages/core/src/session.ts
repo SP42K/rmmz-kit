@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './io/atomicWrite.js';
 import { parseJson, stringifyCompact } from './io/format.js';
@@ -39,6 +39,8 @@ export class ProjectSession {
     private readonly dirty: Set<string>,
     /** Subset of `dirty` that has no file on disk yet — rollback deletes these instead of re-parsing. */
     private readonly created: Set<string>,
+    /** Staged writes to non-data files (js/plugins.js, imported assets), keyed by root-relative path. */
+    private readonly rawWrites: Map<string, string | Uint8Array>,
     lockSnapshot: EditorLockSnapshot,
     git: GitRepo,
     private readonly options: Required<OpenProjectOptions>
@@ -68,7 +70,7 @@ export class ProjectSession {
 
     const git = new GitRepo(rootPath);
 
-    return new ProjectSession(rootPath, dataDir, files, originalText, new Set(), new Set(), lockSnapshot, git, {
+    return new ProjectSession(rootPath, dataDir, files, originalText, new Set(), new Set(), new Map(), lockSnapshot, git, {
       requireEditorClosed: options.requireEditorClosed ?? true,
     });
   }
@@ -105,6 +107,53 @@ export class ProjectSession {
     this.files.set(name, data);
     this.created.add(name);
     this.dirty.add(name);
+  }
+
+  /**
+   * Stage a write to a project file that isn't part of `data/` — js/plugins.js
+   * and imported img//audio/ assets (M7.6). Path is relative to the project
+   * root, and staged content is what `readRaw` returns from then on, so a tool
+   * that reads-modifies-writes sees its own edits.
+   *
+   * These are deliberately *not* modeled as data files: they are not JSON, have
+   * no id-indexed structure, and (for assets) can be megabytes of bytes we have
+   * no reason to parse. They join the transaction only at its two ends —
+   * commit() writes and git-adds them, rollback() drops them — which is the
+   * part callers actually depend on: an MCP agent that imports an asset, edits
+   * a database row, then hits a validation error must not be left with the
+   * asset already on disk.
+   */
+  writeRaw(relPath: string, content: string | Uint8Array): void {
+    this.rawWrites.set(this.resolveRawPath(relPath), content);
+  }
+
+  /** Staged content if this session wrote it, otherwise what's on disk. Text only — assets are written, never read back. */
+  async readRaw(relPath: string): Promise<string | null> {
+    const key = this.resolveRawPath(relPath);
+    const staged = this.rawWrites.get(key);
+    if (staged !== undefined) return typeof staged === 'string' ? staged : Buffer.from(staged).toString('utf-8');
+    return readFile(path.join(this.rootPath, key), 'utf-8').catch(() => null);
+  }
+
+  /** Non-data files staged by writeRaw(), root-relative with forward slashes. */
+  rawWriteFiles(): string[] {
+    return [...this.rawWrites.keys()];
+  }
+
+  /**
+   * A trust boundary: `relPath` comes from an MCP client, and the whole point
+   * of this channel is writing outside `data/`. Anything that escapes the
+   * project root (or arrives absolute) is rejected rather than normalized into
+   * something surprising.
+   */
+  private resolveRawPath(relPath: string): string {
+    const normalized = path.normalize(relPath).split(path.sep).join('/');
+    const full = path.resolve(this.rootPath, normalized);
+    const relative = path.relative(this.rootPath, full);
+    if (path.isAbsolute(relPath) || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`Path escapes the project root: ${relPath}`);
+    }
+    return relative.split(path.sep).join('/');
   }
 
   /** Mutate a file's in-memory data. Return a replacement, or mutate in place and return nothing. */
@@ -172,6 +221,7 @@ export class ProjectSession {
     }
     this.dirty.clear();
     this.created.clear();
+    this.rawWrites.clear();
   }
 
   /**
@@ -185,11 +235,12 @@ export class ProjectSession {
     if (report.errors.length > 0) {
       throw new Error(`Cannot commit, validation failed:\n${report.errors.map((e) => `  - ${e}`).join('\n')}`);
     }
-    if (this.dirty.size === 0) {
+    if (this.dirty.size === 0 && this.rawWrites.size === 0) {
       return null;
     }
 
     const written = new Map<string, string>();
+    const writtenRaw: string[] = [];
     try {
       for (const name of this.dirty) {
         const text = stringifyCompact(this.files.get(name));
@@ -197,8 +248,23 @@ export class ProjectSession {
         written.set(name, text);
       }
 
+      // After the data files: an asset referenced by a row we failed to write
+      // is litter, but a row referencing an asset we failed to write is a
+      // broken project.
+      for (const [rel, content] of this.rawWrites) {
+        const full = path.join(this.rootPath, rel);
+        // img/pictures and the like may not exist yet in a project that never
+        // used them; atomicWriteFile needs the directory for its temp file.
+        await mkdir(path.dirname(full), { recursive: true });
+        await atomicWriteFile(full, content);
+        writtenRaw.push(rel);
+      }
+
       if (await this.git.isRepo()) {
-        await this.git.add([...written.keys()].map((name) => path.join(this.dataDir, name)));
+        await this.git.add([
+          ...[...written.keys()].map((name) => path.join(this.dataDir, name)),
+          ...writtenRaw.map((rel) => path.join(this.rootPath, rel)),
+        ]);
         return await this.git.commit(message);
       }
       return null;
@@ -212,6 +278,7 @@ export class ProjectSession {
         this.dirty.delete(name);
         this.created.delete(name);
       }
+      for (const rel of writtenRaw) this.rawWrites.delete(rel);
       this.lockSnapshot = await EditorLockSnapshot.capture(
         this.listFiles().map((name) => path.join(this.dataDir, name))
       );

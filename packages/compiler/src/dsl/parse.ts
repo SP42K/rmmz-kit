@@ -1,6 +1,16 @@
 import { parse as parseYaml } from 'yaml';
-import type { Condition, Node } from '../ir.js';
-import { ChoicePayload, IfPayload, SayPayload, Step, StepListSchema } from './schema.js';
+import { MOVE_ROUTE_CODES, SIMPLE_COMMANDS, SIMPLE_KINDS, type Condition, type MoveStep, type Node } from '../ir.js';
+import {
+  BattlePayload,
+  ChoicePayload,
+  IfPayload,
+  MoveRoutePayload,
+  MoveStepSpec,
+  SayPayload,
+  ShopPayload,
+  Step,
+  StepListSchema,
+} from './schema.js';
 
 /** Parses a YAML DSL document (plan §4.2) into IR nodes ready for emit.ts's compile(). */
 export function parseDsl(yamlText: string): Node[] {
@@ -42,7 +52,83 @@ export function stepToNode(step: Step): Node {
       body: step.raw.body?.map(stepToNode),
     };
   }
+  if ('moveRoute' in step) return moveRouteToNode(step.moveRoute);
+  if ('playBgm' in step) {
+    const { name, volume, pitch, pan } = step.playBgm;
+    return { kind: 'playBgm', name, volume: volume ?? 90, pitch: pitch ?? 100, pan: pan ?? 0 };
+  }
+  if ('battle' in step) return battleToNode(step.battle);
+  if ('shop' in step) return shopToNode(step.shop);
+  if ('script' in step) return { kind: 'script', lines: toLines(step.script) };
+  if ('pluginCommand' in step) {
+    const { plugin, command, label, args } = step.pluginCommand;
+    return { kind: 'pluginCommand', plugin, command, label, args: args ?? {} };
+  }
+  const simple = simpleToNode(step);
+  if (simple) return simple;
   throw new Error(`Unrecognized DSL step: ${JSON.stringify(step)}`);
+}
+
+/** Fills in ir.ts's table defaults for every field the author left out (or for `- fadeOut:`, which YAML hands us as `null`). */
+function simpleToNode(step: Step): Node | undefined {
+  const kind = SIMPLE_KINDS.find((k) => k in step);
+  if (!kind) return undefined;
+  const payload = (step as Record<string, Record<string, unknown> | null>)[kind] ?? {};
+  return { kind, ...SIMPLE_COMMANDS[kind].fields, ...payload } as unknown as Node;
+}
+
+function moveRouteToNode(payload: MoveRoutePayload): Node {
+  return {
+    kind: 'moveRoute',
+    characterId: payload.characterId ?? 0,
+    repeat: payload.repeat ?? false,
+    skippable: payload.skippable ?? false,
+    wait: payload.wait ?? false,
+    route: payload.route.map(moveStep),
+  };
+}
+
+/** Exported because `upsert_map_event` writes a page's autonomous route and must accept the same step names as the DSL does. */
+export function moveStep(spec: MoveStepSpec): MoveStep {
+  if (typeof spec === 'string') return { code: routeCode(spec) };
+  const code = typeof spec.step === 'number' ? spec.step : routeCode(spec.step);
+  return spec.parameters ? { code, parameters: spec.parameters } : { code };
+}
+
+function routeCode(name: string): number {
+  const code = (MOVE_ROUTE_CODES as Record<string, number>)[name];
+  // A typo'd route step is otherwise a NaN code, i.e. a move route the game
+  // silently skips — the same failure mode say.face's index check exists for.
+  if (code === undefined) {
+    throw new Error(`Unknown move route step ${JSON.stringify(name)}. Known steps: ${Object.keys(MOVE_ROUTE_CODES).join(', ')}`);
+  }
+  return code;
+}
+
+function battleToNode(payload: BattlePayload): Node {
+  return {
+    kind: 'battle',
+    designation: payload.designation ?? 0,
+    troopId: payload.troopId ?? 1,
+    canEscape: payload.canEscape ?? false,
+    canLose: payload.canLose ?? false,
+    win: payload.win?.map(stepToNode),
+    escape: payload.escape?.map(stepToNode),
+    lose: payload.lose?.map(stepToNode),
+  };
+}
+
+function shopToNode(payload: ShopPayload): Node {
+  return {
+    kind: 'shop',
+    goods: payload.goods.map((good) => ({
+      type: good.type ?? 0,
+      id: good.id,
+      priceType: good.priceType ?? 0,
+      price: good.price ?? 0,
+    })),
+    purchaseOnly: payload.purchaseOnly ?? false,
+  };
 }
 
 function sayToNode(say: string | SayPayload): Node {

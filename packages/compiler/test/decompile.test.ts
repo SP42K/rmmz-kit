@@ -38,43 +38,41 @@ describe('decompile', () => {
   });
 
   it('falls back to a RawNode for an unmodeled code', () => {
-    const commands = compile([{ kind: 'raw', code: 357, parameters: ['MyPlugin', 'cmd', {}] }]);
-    expect(decompile(commands)).toEqual([{ kind: 'raw', code: 357, parameters: ['MyPlugin', 'cmd', {}] }]);
+    // 231 Show Picture — Tier 3, so still nothing but code+parameters here.
+    const commands = compile([{ kind: 'raw', code: 231, parameters: [1, 'Cloud', 0, 0, 0, 0, 100, 100, 255, 0] }]);
+    expect(decompile(commands)).toEqual([{ kind: 'raw', code: 231, parameters: [1, 'Cloud', 0, 0, 0, 0, 100, 100, 255, 0] }]);
   });
 
-  it('round-trips an unmodeled structural command with an indented body (Battle Processing)', () => {
-    // 301 Battle Processing / 601 If Win / 603 If Lose / 604 End: MZ indents
-    // each branch body by one exactly like 111/411/412, but nothing here
-    // models it. It must survive as RawNodes carrying a `body`, not throw.
+  it('round-trips an unmodeled structural command with an indented body', () => {
+    // A command this compiler has no node for, whose body MZ indents by one
+    // exactly like 111/411/412 (Battle Processing was this case until M7.5
+    // typed it; Tier 3 and plugin-added commands still are). It must survive
+    // as RawNodes carrying a `body`, not throw.
     const commands: EventCommand[] = [
-      { code: 301, indent: 0, parameters: [0, 1, false, false] },
-      { code: 601, indent: 0, parameters: [] },
+      { code: 900, indent: 0, parameters: ['branching plugin command'] },
       { code: 101, indent: 1, parameters: ['', 0, 0, 2] },
-      { code: 401, indent: 1, parameters: ['Victory!'] },
-      { code: 603, indent: 0, parameters: [] },
+      { code: 401, indent: 1, parameters: ['Inside the body'] },
+      { code: 901, indent: 0, parameters: [] },
       { code: 230, indent: 1, parameters: [60] },
-      { code: 604, indent: 0, parameters: [] },
       { code: 0, indent: 0, parameters: [] },
     ];
 
     const nodes = decompile(commands);
     expect(nodes).toEqual([
-      { kind: 'raw', code: 301, parameters: [0, 1, false, false] },
       {
         kind: 'raw',
-        code: 601,
-        parameters: [],
-        body: [{ kind: 'text', face: '', faceIndex: 0, background: 0, position: 2, speakerName: undefined, lines: ['Victory!'] }],
+        code: 900,
+        parameters: ['branching plugin command'],
+        body: [{ kind: 'text', face: '', faceIndex: 0, background: 0, position: 2, speakerName: undefined, lines: ['Inside the body'] }],
       },
-      { kind: 'raw', code: 603, parameters: [], body: [{ kind: 'wait', frames: 60 }] },
-      { kind: 'raw', code: 604, parameters: [] },
+      { kind: 'raw', code: 901, parameters: [], body: [{ kind: 'wait', frames: 60 }] },
     ]);
     expect(compile(nodes)).toEqual(commands);
   });
 
   it('does not hand out IR that aliases the input command list', () => {
     const source: EventCommand[] = [
-      { code: 357, indent: 0, parameters: ['MyPlugin', 'cmd'] },
+      { code: 231, indent: 0, parameters: [1, 'Cloud'] },
       { code: 0, indent: 0, parameters: [] },
     ];
     const [node] = decompile(source) as [{ kind: 'raw'; parameters: unknown[] }];

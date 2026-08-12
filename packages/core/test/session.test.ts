@@ -228,4 +228,54 @@ describe('ProjectSession', () => {
     await expect(session.commit('feat: add map')).rejects.toThrow(/already exists on disk/);
     expect(JSON.parse(await readFile(path.join(dir, 'data', 'Map002.json'), 'utf-8'))).toEqual({ width: 99 });
   });
+
+  it('writeRaw stages a non-data file until commit, and git-adds it', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    session.writeRaw('js/plugins.js', 'var $plugins = [];\n');
+    // A folder the project doesn't have yet: commit() has to create it.
+    session.writeRaw('img/characters/Hero.png', new Uint8Array([1, 2, 3]));
+
+    expect(session.rawWriteFiles()).toEqual(['js/plugins.js', 'img/characters/Hero.png']);
+    expect(await session.readRaw('js/plugins.js')).toBe('var $plugins = [];\n');
+    // Nothing on disk yet — same rule as a dirty data file.
+    expect(await readFile(path.join(dir, 'img', 'characters', 'Hero.png')).catch(() => null)).toBeNull();
+
+    await session.commit('feat: add plugin and character');
+
+    expect(await readFile(path.join(dir, 'js', 'plugins.js'), 'utf-8')).toBe('var $plugins = [];\n');
+    expect([...(await readFile(path.join(dir, 'img', 'characters', 'Hero.png')))]).toEqual([1, 2, 3]);
+    expect(session.rawWriteFiles()).toEqual([]);
+    const { stdout } = await execFileAsync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: dir });
+    expect(stdout).toContain('img/characters/Hero.png');
+  });
+
+  it('rollback drops staged non-data writes, and reads fall back to disk', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const original = await session.readRaw('js/plugins.js');
+    session.writeRaw('js/plugins.js', 'var $plugins = [];\n');
+    session.rollback();
+
+    expect(session.rawWriteFiles()).toEqual([]);
+    expect(await session.readRaw('js/plugins.js')).toBe(original);
+    expect(await session.readRaw('js/nope.js')).toBeNull();
+  });
+
+  it('refuses a raw path that escapes the project root', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    // The path comes from an MCP client, and this channel exists to write
+    // outside data/ — so the only thing between it and the user's filesystem
+    // is this check.
+    expect(() => session.writeRaw('../evil.js', 'x')).toThrow(/escapes the project root/);
+    expect(() => session.writeRaw('js/../../evil.js', 'x')).toThrow(/escapes the project root/);
+    expect(() => session.writeRaw(path.join(dir, 'evil.js'), 'x')).toThrow(/escapes the project root/);
+  });
 });

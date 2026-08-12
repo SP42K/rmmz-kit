@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { ProjectSession, SystemData, MapData } from '@rmmz-kit/core';
 import { mapFileName } from '@rmmz-kit/core';
 import { decompile, printDsl } from '@rmmz-kit/compiler';
+import { ASSET_DIRS } from './assets.js';
 import { DATABASE_TABLES } from './tables.js';
 
 /**
@@ -81,33 +82,25 @@ export function databaseResource(session: ProjectSession, table: string): unknow
 }
 
 /**
- * Filenames (extension stripped) present under each standard asset folder.
- * Grounding an LLM in what actually exists — plan §4.5's point that this is
- * disproportionately effective at stopping hallucinated filenames. A missing
- * folder (the fixture project has none) just reports an empty list, same
- * "can't say anything" stance validate/rules/references.ts takes.
+ * Filenames (extension stripped) present under each standard asset folder
+ * (ASSET_DIRS, shared with import_asset). Grounding an LLM in what actually
+ * exists — plan §4.5's point that this is disproportionately effective at
+ * stopping hallucinated filenames. A missing folder (the fixture project has
+ * none) just reports an empty list, same "can't say anything" stance
+ * validate/rules/references.ts takes.
+ *
+ * Assets imported in this session but not yet committed are included: they are
+ * exactly the ones a model is about to reference, and a catalog that denied
+ * their existence would talk it out of its own import.
  */
-const ASSET_DIRS = [
-  'img/characters',
-  'img/faces',
-  'img/enemies',
-  'img/sv_actors',
-  'img/pictures',
-  'img/parallaxes',
-  'img/tilesets',
-  'audio/bgm',
-  'audio/bgs',
-  'audio/me',
-  'audio/se',
-];
-
 export async function assetCatalog(session: ProjectSession): Promise<Record<string, string[]>> {
   const catalog: Record<string, string[]> = {};
+  const staged = session.rawWriteFiles();
   await Promise.all(
     ASSET_DIRS.map(async (rel) => {
-      catalog[rel] = await readdir(path.join(session.rootPath, rel))
-        .then((entries) => entries.map((f) => f.replace(/\.[^./]+$/, '')).sort())
-        .catch(() => []);
+      const onDisk = await readdir(path.join(session.rootPath, rel)).catch(() => []);
+      const pending = staged.filter((file) => file.startsWith(`${rel}/`)).map((file) => file.slice(rel.length + 1));
+      catalog[rel] = [...new Set([...onDisk, ...pending].map((f) => f.replace(/\.[^./]+$/, '')))].sort();
     })
   );
   return catalog;

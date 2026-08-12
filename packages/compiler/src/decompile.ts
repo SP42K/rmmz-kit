@@ -1,8 +1,16 @@
-import type { EventCommand } from '@rmmz-kit/core';
-import type { CompareOp, Condition, Node, RawNode } from './ir.js';
+import type { EventCommand, MoveRoute } from '@rmmz-kit/core';
+import { SIMPLE_COMMANDS, type CompareOp, type Condition, type MoveStep, type Node, type RawNode, type ShopGood, type SimpleKind } from './ir.js';
 
 const COMPARE_OPS: CompareOp[] = ['eq', 'gte', 'lte', 'gt', 'lt', 'neq'];
 const VARIABLE_OPS: Array<'set' | 'add' | 'sub' | 'mul' | 'div' | 'mod'> = ['set', 'add', 'sub', 'mul', 'div', 'mod'];
+
+/** ir.ts's flat-parameter table, keyed the way decompile needs it. */
+const SIMPLE_BY_CODE = new Map<number, { kind: SimpleKind; fields: string[]; defaults: unknown[] }>(
+  Object.entries(SIMPLE_COMMANDS).map(([kind, spec]) => [
+    spec.code,
+    { kind: kind as SimpleKind, fields: Object.keys(spec.fields), defaults: Object.values(spec.fields) as unknown[] },
+  ])
+);
 
 /**
  * Inverse of emit.ts's compile(). Expects a full page/common-event command
@@ -196,21 +204,127 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
         break;
       }
 
-      case 250: {
+      case 250:
+      case 241: {
         const audio = cmd.parameters[0] as { name: string; volume: number; pitch: number; pan: number } | undefined;
-        // A plugin-written or truncated 250 must degrade to RawNode like every
-        // other unmodeled shape, not throw a TypeError out of decompile().
+        // A plugin-written or truncated 250/241 must degrade to RawNode like
+        // every other unmodeled shape, not throw a TypeError out of decompile().
         if (audio === null || typeof audio !== 'object') {
           pos = pushRaw(nodes, cmds, pos, indent);
           break;
         }
-        nodes.push({ kind: 'playSe', name: audio.name, volume: audio.volume, pitch: audio.pitch, pan: audio.pan });
+        const kind = cmd.code === 250 ? 'playSe' : 'playBgm';
+        nodes.push({ kind, name: audio.name, volume: audio.volume, pitch: audio.pitch, pan: audio.pan });
         pos++;
         break;
       }
 
-      default:
+      case 205: {
+        const [characterId, route] = cmd.parameters as [number, MoveRoute | undefined];
+        if (typeof characterId !== 'number' || !route || typeof route !== 'object' || !Array.isArray(route.list)) {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
+        pos++;
+        // Drop the 505 mirror rows: they are a redundant copy of `route.list`
+        // that the interpreter never reads (command505 is a no-op), so keeping
+        // both in the IR would mean two sources of truth for one route.
+        while (cmds[pos]?.code === 505 && cmds[pos].indent === indent) pos++;
+        nodes.push({
+          kind: 'moveRoute',
+          characterId,
+          repeat: route.repeat ?? false,
+          skippable: route.skippable ?? false,
+          wait: route.wait ?? false,
+          route: stripRouteEnd(route.list),
+        });
+        break;
+      }
+
+      case 301: {
+        const [designation, troopId, canEscape, canLose] = cmd.parameters as [number, number, boolean, boolean];
+        pos++;
+        const branches: Array<[601 | 602 | 603, Node[]]> = [];
+        for (const code of [601, 602, 603] as const) {
+          if (cmds[pos]?.code !== code || cmds[pos].indent !== indent) continue;
+          pos++;
+          const result = parseBlock(cmds, pos, indent + 1);
+          pos = result.pos;
+          pos = consumeOptionalFiller(cmds, pos, indent + 1);
+          branches.push([code, result.nodes]);
+        }
+        expect(cmds, pos, 604, indent);
+        pos++;
+        const branch = (code: 601 | 602 | 603) => branches.find(([c]) => c === code)?.[1];
+        nodes.push({
+          kind: 'battle',
+          designation,
+          troopId,
+          canEscape,
+          canLose,
+          win: branch(601),
+          escape: branch(602),
+          lose: branch(603),
+        });
+        break;
+      }
+
+      case 302: {
+        const [type, id, priceType, price, purchaseOnly] = cmd.parameters as [number, number, number, number, boolean];
+        pos++;
+        const goods: ShopGood[] = [{ type, id, priceType, price }];
+        while (cmds[pos]?.code === 605 && cmds[pos].indent === indent) {
+          const [t, i, pt, p] = cmds[pos].parameters as [number, number, number, number];
+          goods.push({ type: t, id: i, priceType: pt, price: p });
+          pos++;
+        }
+        nodes.push({ kind: 'shop', goods, purchaseOnly: purchaseOnly ?? false });
+        break;
+      }
+
+      case 355: {
+        const lines: string[] = [cmd.parameters[0] as string];
+        pos++;
+        while (pos < cmds.length && cmds[pos].code === 655 && cmds[pos].indent === indent) {
+          lines.push(cmds[pos].parameters[0] as string);
+          pos++;
+        }
+        nodes.push({ kind: 'script', lines });
+        break;
+      }
+
+      case 357: {
+        const [plugin, command, label, args] = cmd.parameters as [string, string, string | undefined, Record<string, unknown> | undefined];
+        if (typeof plugin !== 'string' || typeof command !== 'string') {
+          pos = pushRaw(nodes, cmds, pos, indent);
+          break;
+        }
+        nodes.push({
+          kind: 'pluginCommand',
+          plugin,
+          command,
+          // Only kept when it differs from the command key; emit re-derives the
+          // usual case, so round-tripping a normal 357 stays byte-identical.
+          label: label === undefined || label === command ? undefined : label,
+          args: args && typeof args === 'object' ? args : {},
+        });
+        pos++;
+        break;
+      }
+
+      default: {
+        const simple = SIMPLE_BY_CODE.get(cmd.code);
+        if (simple && matchesSimple(simple, cmd.parameters)) {
+          const node: Record<string, unknown> = { kind: simple.kind };
+          simple.fields.forEach((name, i) => {
+            node[name] = i < cmd.parameters.length ? cmd.parameters[i] : simple.defaults[i];
+          });
+          nodes.push(node as unknown as Node);
+          pos++;
+          break;
+        }
         pos = pushRaw(nodes, cmds, pos, indent);
+      }
     }
   }
   return { nodes, pos };
@@ -241,6 +355,24 @@ function pushRaw(nodes: Node[], cmds: EventCommand[], pos: number, indent: numbe
   }
   nodes.push(node);
   return pos;
+}
+
+/**
+ * A flat-parameter command only decompiles to its typed node if the data really
+ * has that shape: no extra trailing parameters (a plugin's or a future MZ
+ * version's addition, which the node has nowhere to hold) and no type
+ * disagreement with the table. Anything else is RawNode's job — the point of
+ * the fallback is that nothing is ever lost, and a silently dropped tail is a loss.
+ */
+function matchesSimple(simple: { fields: string[]; defaults: unknown[] }, parameters: unknown[]): boolean {
+  if (parameters.length > simple.fields.length) return false;
+  return parameters.every((value, i) => typeof value === typeof simple.defaults[i]);
+}
+
+/** MZ terminates a move route with ROUTE_END; the IR omits it the same way it omits the command list's own terminator. */
+function stripRouteEnd(list: MoveRoute['list']): MoveStep[] {
+  const steps = list.at(-1)?.code === 0 ? list.slice(0, -1) : [...list];
+  return steps.map((step) => (step.parameters ? { code: step.code, parameters: [...step.parameters] } : { code: step.code }));
 }
 
 /** Choice/cancel branches end with an optional `{code:0}` filler (see ChoiceNode doc in ir.ts) — consume it if present. */

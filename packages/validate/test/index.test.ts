@@ -47,7 +47,7 @@ describe('validateProject (M4 acceptance)', () => {
       // structure/break-outside-loop
       data.events.push(mapEvent(4, 'E-break-outside-loop', [page([{ code: 113, indent: 0, parameters: [] }])]));
       // references/dangling-item
-      data.events.push(mapEvent(5, 'E-dangling-item', [page([{ code: 126, indent: 0, parameters: [999, 0, 0, 0, 1] }])]));
+      data.events.push(mapEvent(5, 'E-dangling-item', [page([{ code: 126, indent: 0, parameters: [999, 0, 0, 1] }])]));
       // references/dangling-commonEvent
       data.events.push(mapEvent(6, 'E-dangling-commonEvent', [page([{ code: 117, indent: 0, parameters: [42] }])]));
       // references/dangling-map
@@ -87,7 +87,7 @@ describe('validateProject (M4 acceptance)', () => {
       // semantics/possible-negative-gold
       data.events.push(mapEvent(14, 'E-negative-gold', [page([{ code: 125, indent: 0, parameters: [1, 0, 500] }])]));
       // semantics/possible-negative-item
-      data.events.push(mapEvent(15, 'E-negative-item', [page([{ code: 126, indent: 0, parameters: [3, 1, 0, 0, 1] }])]));
+      data.events.push(mapEvent(15, 'E-negative-item', [page([{ code: 126, indent: 0, parameters: [3, 1, 0, 1] }])]));
     });
     // references/dangling-actor
     session.updateFile<MapData>('Map001.json', (data) => {

@@ -1,5 +1,5 @@
-import type { EventCommand } from '@rmmz-kit/core';
-import type { CompareOp, Condition, Node } from './ir.js';
+import type { EventCommand, MoveRoute } from '@rmmz-kit/core';
+import { SIMPLE_COMMANDS, type CompareOp, type Condition, type MoveStep, type Node } from './ir.js';
 
 const COMPARE_CODES: Record<CompareOp, number> = {
   eq: 0,
@@ -132,13 +132,106 @@ function emitNode(node: Node, indent: number, out: EventCommand[]): void {
       return;
 
     case 'playSe':
+      out.push(audioCommand(250, indent, node));
+      return;
+
+    case 'playBgm':
+      out.push(audioCommand(241, indent, node));
+      return;
+
+    case 'moveRoute': {
+      const route = buildMoveRoute(node);
+      out.push({ code: 205, indent, parameters: [node.characterId, route] });
+      // The 505 mirror rows: one per route step, terminator included. The
+      // interpreter ignores them, the editor renders from them — omitting them
+      // makes a route the game runs but the editor shows as a blank line.
+      for (const step of route.list) out.push({ code: 505, indent, parameters: [step] });
+      return;
+    }
+
+    case 'battle': {
       out.push({
-        code: 250,
+        code: 301,
         indent,
-        parameters: [{ name: node.name, volume: node.volume, pitch: node.pitch, pan: node.pan }],
+        parameters: [node.designation, node.troopId, node.canEscape, node.canLose],
+      });
+      if (node.win) {
+        out.push({ code: 601, indent, parameters: [] });
+        emitList(node.win, indent + 1, out);
+      }
+      if (node.escape) {
+        out.push({ code: 602, indent, parameters: [] });
+        emitList(node.escape, indent + 1, out);
+      }
+      if (node.lose) {
+        out.push({ code: 603, indent, parameters: [] });
+        emitList(node.lose, indent + 1, out);
+      }
+      out.push({ code: 604, indent, parameters: [] });
+      return;
+    }
+
+    case 'shop': {
+      // `Game_Interpreter.command302` reads the first good off the 302 itself,
+      // so an empty stock has nowhere to put `purchaseOnly` and would emit a
+      // 302 whose parameters are all undefined — i.e. `null`s on disk.
+      if (node.goods.length === 0) throw new Error('Shop Processing needs at least one good');
+      const [first, ...rest] = node.goods;
+      out.push({ code: 302, indent, parameters: [first.type, first.id, first.priceType, first.price, node.purchaseOnly] });
+      for (const good of rest) {
+        out.push({ code: 605, indent, parameters: [good.type, good.id, good.priceType, good.price] });
+      }
+      return;
+    }
+
+    case 'script': {
+      const lines = node.lines.length > 0 ? node.lines : [''];
+      lines.forEach((line, i) => out.push({ code: i === 0 ? 355 : 655, indent, parameters: [line] }));
+      return;
+    }
+
+    case 'pluginCommand':
+      out.push({
+        code: 357,
+        indent,
+        parameters: [node.plugin, node.command, node.label ?? node.command, node.args],
       });
       return;
+
+    default: {
+      // Every Tier 2 command whose payload is a flat parameter list — the table
+      // in ir.ts is the parameter order, for emit and decompile both.
+      const spec = SIMPLE_COMMANDS[node.kind];
+      if (!spec) throw new Error(`Cannot emit unknown node kind: ${JSON.stringify((node as Node).kind)}`);
+      const fields = node as unknown as Record<string, unknown>;
+      out.push({ code: spec.code, indent, parameters: Object.keys(spec.fields).map((name) => fields[name]) });
+    }
   }
+}
+
+function audioCommand(code: number, indent: number, node: { name: string; volume: number; pitch: number; pan: number }): EventCommand {
+  return { code, indent, parameters: [{ name: node.name, volume: node.volume, pitch: node.pitch, pan: node.pan }] };
+}
+
+/**
+ * The `{list, repeat, skippable, wait}` object MZ stores both on a 205 and on
+ * an event page's autonomous `moveRoute`. Exported because the MCP layer writes
+ * the page one (`upsert_map_event`), and two places deriving "append ROUTE_END,
+ * default `indent: null` per step" separately is how they drift apart.
+ */
+export function buildMoveRoute(spec: {
+  route: MoveStep[];
+  repeat: boolean;
+  skippable: boolean;
+  wait: boolean;
+}): MoveRoute {
+  const list: MoveRoute['list'] = spec.route.map((step) => ({
+    code: step.code,
+    indent: null,
+    ...(step.parameters ? { parameters: [...step.parameters] } : {}),
+  }));
+  list.push({ code: 0, indent: null });
+  return { list, repeat: spec.repeat, skippable: spec.skippable, wait: spec.wait };
 }
 
 function conditionParams(condition: Condition): unknown[] {

@@ -9,7 +9,7 @@ import * as tools from './tools.js';
  * L3 MCP tool layer (plan §3 M5): a thin adapter — every handler below is a
  * one-line call into resources.ts/tools.ts, which hold the actual logic and
  * are tested independently of any transport. Tool/resource grain follows
- * plan §4.5: 4 read resources, 15 write/validate/transaction tools (playtest and
+ * plan §4.5: 4 read resources, 17 write/validate/transaction tools (playtest and
  * coverage from §4.5's list are still omitted — they front L5, which is M8 and
  * doesn't exist in this repo yet).
  */
@@ -83,6 +83,12 @@ const ScriptTargetSchema = z.union([
   z.object({ commonEvent: z.number().int() }).strict(),
 ]);
 
+/** A movement route step, same surface as the DSL's: a `Game_Character.ROUTE_*` name on its own, or a name/code plus operands. */
+const MoveStepSchema = z.union([
+  z.string(),
+  z.object({ step: z.union([z.string(), z.number().int()]), parameters: z.array(z.unknown()).optional() }).strict(),
+]);
+
 const PageSpecSchema = z
   .object({
     conditions: z.record(z.string(), z.unknown()).optional(),
@@ -91,6 +97,16 @@ const PageSpecSchema = z
     moveType: z.number().int().optional(),
     moveSpeed: z.number().int().optional(),
     moveFrequency: z.number().int().optional(),
+    moveRoute: z
+      .object({
+        route: z.array(MoveStepSchema),
+        repeat: z.boolean().optional(),
+        skippable: z.boolean().optional(),
+        wait: z.boolean().optional(),
+      })
+      .strict()
+      .optional()
+      .describe('Autonomous route, used when moveType is 3 (custom); the ROUTE_END terminator is added for you'),
     priorityType: z.number().int().optional(),
     through: z.boolean().optional(),
     walkAnime: z.boolean().optional(),
@@ -277,6 +293,43 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       },
     },
     async (spec) => json(tools.composeMapTool(session, spec))
+  );
+
+  server.registerTool(
+    'manage_plugins',
+    {
+      description:
+        'List js/plugins.js, and optionally enable/disable/configure plugins by name (new names are appended in load order). Call with no entries to just read it. The plugin\'s js/plugins/<name>.js must already exist.',
+      inputSchema: {
+        entries: z
+          .array(
+            z
+              .object({
+                name: z.string().describe('The plugin file\'s name without .js'),
+                status: z.boolean().optional().describe('true = enabled'),
+                description: z.string().optional(),
+                parameters: z.record(z.string(), z.unknown()).optional(),
+              })
+              .strict()
+          )
+          .optional(),
+      },
+    },
+    async ({ entries }) => json({ plugins: await tools.managePlugins(session, entries) })
+  );
+
+  server.registerTool(
+    'import_asset',
+    {
+      description:
+        'Copy an image or audio file into the right project folder. Lands with commit() like every other change, and shows up in rmmz://asset-catalog immediately.',
+      inputSchema: {
+        dir: z.string().describe('Target folder, e.g. img/characters or audio/se'),
+        source: z.string().describe('Path of the file to copy in'),
+        name: z.string().optional().describe("Target filename; defaults to the source's own"),
+      },
+    },
+    async (spec) => json(await tools.importAsset(session, spec))
   );
 
   server.registerTool(
