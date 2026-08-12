@@ -8,7 +8,14 @@ import type {
   EventCommand,
   CommonEvent,
 } from '@rmmz-kit/core';
-import { IdAllocator, mapFileName } from '@rmmz-kit/core';
+import {
+  IdAllocator,
+  createProject,
+  deployProject,
+  mapFileName,
+  type CreateProjectOptions,
+  type DeployOptions,
+} from '@rmmz-kit/core';
 import { buildMoveRoute, compile, moveStep, parseDsl, type MoveStepSpec } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
 import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesim';
@@ -499,6 +506,42 @@ export async function generateGame(
       coverage: { percent: s.coverage.percent, messagePercent: s.coverage.messagePercent, unparsed: s.coverage.unparsed },
     })),
   };
+}
+
+/**
+ * `deploy` (plan §3 M11): the shippable package. Copies what is *on disk* —
+ * the same choice `playtest` makes — so a session with pending edits gets its
+ * dirty files named in the report rather than silently shipping memory that
+ * matches no commit.
+ *
+ * `pruned` is summarised on the way out for the reason `generate_game`'s report
+ * is: a real project prunes hundreds of files, and a client that wants the full
+ * list can diff the directory it just asked for.
+ */
+export async function deploy(session: ProjectSession, options: DeployOptions): Promise<Record<string, unknown>> {
+  const report = await deployProject(session.rootPath, options);
+  const uncommitted = [...session.dirtyFiles(), ...session.rawWriteFiles()];
+  return {
+    ...report,
+    pruned: report.pruned.length,
+    prunedSample: report.pruned.slice(0, 20),
+    ...(uncommitted.length > 0
+      ? { uncommitted, warnings: [...report.warnings, `Deployed what is on disk; ${uncommitted.length} edited file(s) are still only in memory — commit and deploy again to include them.`] }
+      : {}),
+  };
+}
+
+/**
+ * `create_project` (plan §3 M11). The one tool that doesn't touch `session`:
+ * it makes a *different* project, so the server must be reopened against the
+ * new path to edit it.
+ */
+export async function createProjectTool(
+  targetPath: string,
+  options: CreateProjectOptions = {}
+): Promise<Record<string, unknown>> {
+  const result = await createProject(targetPath, options);
+  return { ...result, files: result.files.length, dataFiles: result.files.filter((f) => f.startsWith('data/')) };
 }
 
 export function commit(session: ProjectSession, message: string): Promise<string | null> {

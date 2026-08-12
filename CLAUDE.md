@@ -34,7 +34,10 @@ a state machine the MCP client drives, plus the 20-bug corpus its acceptance
 names — the *repair rate* needs a model this process doesn't have, see below).
 M10 done (`packages/gamegen`: spec → whole playable game, plus the walkthrough
 that proves it is finishable — the one-sentence-to-spec half is the MCP client's,
-see below). L2 Tier 3 and M11 (`deploy`, `create_project`) not started.
+see below). M11 done (`deploy` + `create_project` in `packages/core`, plus the
+`templates/blank-project` tree — both halves of the editor-parity table's last
+two rows, minus what needs the paid editor's runtime, see below). L2 Tier 3 not
+started.
 
 ## Commands
 
@@ -233,15 +236,18 @@ resolved) keeps dev tooling on the TS sources — see Conventions.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 5 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`,
-`rmmz://game-brief-guide`) plus 21 tools (`apply_script`, `upsert_map_event`, `upsert_database`,
+`rmmz://game-brief-guide`) plus 23 tools (`apply_script`, `upsert_map_event`, `upsert_database`,
 `update_system`, `create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`,
 `manage_plugins`, `import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`,
-`run_scenario`, `repair`, `generate_game`, `diff`, `commit`, `rollback`). §4.5's `coverage()` is
+`run_scenario`, `repair`, `generate_game`, `deploy`, `create_project`, `diff`, `commit`,
+`rollback`). §4.5's `coverage()` is
 *not* one of them: coverage with
 no scenario behind it is a table of zeroes, so it rides in `run_scenario`'s report instead. `simulate_battle`
 and `run_scenario` both run against the *in-memory* session, so an agent can ask "did that buff
 break the boss fight?" or "does the quest still complete?" about an edit it has not committed —
-`playtest` is the exception and serves what is on disk, because a browser reads files, not memory.
+`playtest` and `deploy` are the exceptions and work on what is on disk, because a browser (and a
+build) reads files, not memory. `create_project` is the one tool that ignores `session` entirely:
+it makes a *different* project, so the server has to be reopened against the new path to edit it.
 
 `rmmz://game-brief-guide` (M10) is the odd resource out: the other four report what the project
 *contains*, this one is prose about how to write a `generate_game` spec and what to do with each
@@ -600,6 +606,66 @@ briefs, and count how many of the resulting specs come back `ok`. Nothing in `sr
 The suite's teeth are pinned by their own test rather than assumed: breaking the turn-in (dropping
 the giver's `setSwitch done`, the most common generated-quest bug there is) must make the
 walkthrough fail and name that switch.
+
+### M11 deploy and project creation (`packages/core`)
+
+The plan's last two editor-parity rows. Both live in **core**, not a package of their own: the
+plan itself says M11「只依賴 L0/L1」, and both are exactly that — copy a directory tree, minus what
+the destination shouldn't have. A package here maps to a *layer*, and neither of these is one; a
+sixth `tsconfig`, `exports` map and CI step would buy nothing.
+
+- `deploy.ts` — `deployProject(rootPath, { outDir, target, excludeUnusedAssets, nwPath })`. Takes a
+  **path, not a session**, the same choice `playtest` makes and for the same reason: what ships is
+  what is on disk, and a build assembled out of a session's uncommitted memory matches no commit.
+  The MCP tool names `dirtyFiles()` in the report instead, so the caller commits and deploys again.
+  Excluded from every build: `Game.rmmzproject` (a leaked build should not reopen as a project),
+  `save/` and `*.rmmzsave` (the developer's playthrough is not the player's), `.git`/`node_modules`.
+  A build containing `js/plugins/AutoTest.js` gets a warning — M8's automation hooks let anyone
+  drive the shipped game.
+  - **Pruning does not use `RefIndex`, which §3 M11 names.** `RefIndex` indexes numeric *ids*
+    (switch 7, Map012) found in event commands; asset references are strings, and most of them live
+    outside events entirely — an actor's `faceName`, a tileset's `tilesetNames`, System's title
+    screen and its 24 SEs. Teaching it string kinds means enumerating every asset-bearing field of
+    every table, which is the per-table modeling §4.5 says not to build. So the collector is blunt
+    on purpose: **every string in every `data/*.json`**, and an asset survives if its
+    extension-stripped basename matches one (case-insensitively). It over-keeps — an item named
+    "Slime" keeps `img/enemies/Slime.png` — and that is the correct direction to be wrong in. A
+    kept-but-unused file is a few KB; a pruned-but-used one is a sprite that silently fails to load
+    in front of a player, in a build nobody plays before release. Same reasoning for the two
+    escapes: `img/system/` is never pruned (MZ hardcodes IconSet/Window/Balloon, so no data file
+    mentions them), and `js/plugins.js` is scanned as loose tokens because plugin parameters are
+    free-form text. A `data/*.json` that won't parse aborts the deploy rather than pruning against
+    a half-known reference set.
+  - `target: 'windows'` is the plan's「NW.js 殼複製」and nothing more: copy the caller's unpacked
+    NW.js distribution, put the web bundle in `www/`, rename `nw.exe` to the game title, write the
+    `package.json` NW.js reads for its entry point. `nwPath` is required — this repo does not ship
+    or download a browser runtime, the same wall M8 hit with MZ's own.
+- `createProject.ts` — `createProject(target, { title, templatePath, runtimeFrom })`: copy the
+  template, set the title, `git init` + one baseline commit (every other tool here assumes a repo;
+  a git failure warns instead of discarding a project that is complete on disk).
+- `templates/blank-project/` — a checked-in tree, not code that builds one. It is data, so "change
+  the default currency unit" should be a JSON edit. It is deliberately **not** `fixtures/
+  minimal-project`: the fixture is minimal on purpose (a 4-field System.json, an event whose
+  command list is structurally broken so the validator has something to catch), none of which
+  belongs in a project someone is about to work in. Its System.json is reconstructed from the field
+  list in `types/mz.ts`, and every asset-name field in it — `title1Name`, all 24 `sounds`, every
+  vehicle — is **empty rather than a plausible default filename**, because this repo ships no art
+  or audio and a plausible name would be a dangling reference the validator is right to report.
+
+**Acceptance, honestly split** — the same shape as M6, M8, M9 and M10. The plan asks that the
+deployed web bundle 「可在瀏覽器完整遊玩」 and that the created project 「編輯器可直接開啟」. Neither
+right-hand side exists here: `js/rmmz_*.js` and the editor are both paid, so there is no game to
+play through and no editor to open anything. What *is* checked is the half that doesn't need them,
+and it is the half a broken build would come from: a created project opens with `openProject` and
+comes back **clean from `validateProject` with zero errors** (`packages/mcp/test/deploy.test.ts`),
+and a bundle deployed from it is served over the playtest HTTP server and its `data/System.json`
+fetched back with the right title, with `Game.rmmzproject` 404ing (same file). Pruning is pinned
+from both ends — a referenced face survives, an unreferenced one and an unreferenced SE do not, an
+`img/system/` file survives being referenced by nothing, and a filename that appears only as a bare
+positional parameter of a Show Picture command survives (that case is what a keyed-fields-only
+collector would delete). To close the rest: run `create_project --runtimeFrom <an installed
+project>` on a licensed machine, open the result in the editor, then `deploy` it and play it.
+Nothing in `src/` should need to change.
 
 ### Legacy JS carried over
 

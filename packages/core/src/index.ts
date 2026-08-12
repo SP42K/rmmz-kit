@@ -9,4 +9,8 @@ export { IdAllocator } from './idAllocator.js';
 export type { NamespaceAllocation } from './idAllocator.js';
 export { RefIndex } from './refIndex.js';
 export type { RefKind, RefLocation } from './refIndex.js';
+export { deployProject } from './deploy.js';
+export type { DeployOptions, DeployReport, DeployTarget } from './deploy.js';
+export { createProject } from './createProject.js';
+export type { CreateProjectOptions, CreateProjectResult } from './createProject.js';
 export * from './types/mz.js';

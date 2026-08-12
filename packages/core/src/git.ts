@@ -27,6 +27,25 @@ export class GitRepo {
     await this.run(['init']);
   }
 
+  /**
+   * Give the repo a local identity if git can't resolve one, returning whether
+   * it had to. A machine with no global `user.name`/`user.email` — a CI runner,
+   * a fresh container — fails `git commit` outright ("please tell me who you
+   * are"), and for a repo this toolchain has just created that means no baseline
+   * commit, which `rollback()` and `commit()` both assume exists. Written
+   * repo-locally and only when absent, so a machine that has an identity keeps
+   * using it.
+   */
+  async ensureIdentity(): Promise<boolean> {
+    // `git var` is the probe rather than reading the two config keys: it applies
+    // git's own resolution order (env, then config, then its auto-detect) and
+    // fails exactly when `git commit` would.
+    if (await this.run(['var', 'GIT_COMMITTER_IDENT']).then(() => true, () => false)) return false;
+    await this.run(['config', 'user.name', 'rmmz-kit']);
+    await this.run(['config', 'user.email', 'rmmz-kit@localhost']);
+    return true;
+  }
+
   async add(filePaths: string[]): Promise<void> {
     if (filePaths.length === 0) return;
     await this.run(['add', '--', ...filePaths]);
