@@ -9,9 +9,9 @@ import * as tools from './tools.js';
  * L3 MCP tool layer (plan §3 M5): a thin adapter — every handler below is a
  * one-line call into resources.ts/tools.ts, which hold the actual logic and
  * are tested independently of any transport. Tool/resource grain follows
- * plan §4.5: 4 read resources, 8 write/validate/transaction tools (compose_map,
- * simulate_battle, playtest and coverage from §4.5's list are omitted — they
- * front L3.5/L4.5/L5, which are M7/M6/M8 and don't exist in this repo yet).
+ * plan §4.5: 4 read resources, 9 write/validate/transaction tools (compose_map
+ * and playtest/coverage from §4.5's list are still omitted — they front
+ * L3.5/L5, which are M7/M8 and don't exist in this repo yet).
  */
 export function createServer(session: ProjectSession): McpServer {
   const server = new McpServer({ name: 'rmmz-kit', version: '0.1.0' });
@@ -155,6 +155,34 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     'validate',
     { description: 'Run the L4 validator (structure, reference integrity, semantics) and return all findings.' },
     async () => json(await tools.validate(session))
+  );
+
+  server.registerTool(
+    'simulate_battle',
+    {
+      description:
+        'Run N headless battles (L4.5) against the current in-memory data and report win rate, turns, TTK, damage distribution, one-shot kills and stalemates.',
+      inputSchema: {
+        party: z
+          .array(
+            z
+              .object({
+                actorId: z.number().int(),
+                level: z.number().int().min(1).optional(),
+                equips: z.array(z.number().int()).optional().describe('Equipment ids by slot; slot 0 is the weapon'),
+                skills: z.array(z.number().int()).optional(),
+              })
+              .strict()
+          )
+          .min(1),
+        troopId: z.number().int().optional(),
+        enemies: z.array(z.number().int()).optional().describe('Enemy ids, as an alternative to troopId'),
+        trials: z.number().int().min(1).max(10000).optional(),
+        maxTurns: z.number().int().min(1).max(1000).optional(),
+        seed: z.number().int().optional(),
+      },
+    },
+    async (spec) => json(tools.simulateBattle(session, spec))
   );
 
   server.registerTool(

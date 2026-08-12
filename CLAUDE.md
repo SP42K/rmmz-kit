@@ -19,8 +19,9 @@ Status: M1 / L0 done (project I/O + transaction). M2 / L1 done (data model types
 ID allocator, reference index). M3 / L2 Tier 1 done (`packages/compiler`: YAML DSL,
 IR, emit, decompile — see below). M4 / L4 done (`packages/validate`: structure,
 reference-integrity, and semantic/graph rules — see below). M5 / L3 done
-(`packages/mcp`: MCP tool/resource layer — see below). L2 Tier 2/3 and
-everything from M6 onward not started.
+(`packages/mcp`: MCP tool/resource layer — see below). M6 / L4.5 done
+(`packages/battlesim`: headless battle simulator — see below). L2 Tier 2/3 and
+everything from M7 onward not started.
 
 ## Commands
 
@@ -31,6 +32,7 @@ npx vitest run -t "rollback"                   # one test by name
 npx tsc -p packages/core/tsconfig.json --noEmit      # typecheck one package
 npx tsc -p packages/compiler/tsconfig.json --noEmit
 npx tsc -p packages/validate/tsconfig.json --noEmit
+npx tsc -p packages/battlesim/tsconfig.json --noEmit
 npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
@@ -41,7 +43,10 @@ or its type errors reach `master` unnoticed.
 
 Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` (and each other
 package's own `test/testProject.ts`, deliberately duplicated rather than cross-imported) copies
-`fixtures/minimal-project` to a temp dir and `git init`s it for every test.
+`fixtures/minimal-project` to a temp dir and `git init`s it for every test. That costs 1–2s per
+test on Windows, so `vitest.config.ts` raises `testTimeout` well above the 5s default — a failure
+there was queueing behind other files, not a hang. `packages/battlesim`'s tests share one copy
+per file (`beforeAll`) because they never write.
 
 ## Architecture
 
@@ -168,11 +173,13 @@ in-process via `createServer()`.
 
 Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 4 read resources
 (`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`)
-plus 8 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `allocate_namespace`,
-`validate`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`, `simulate_battle`,
-`playtest`, and `coverage` — all omitted here because they front L3.5/L4.5/L5 (M7/M6/M8), which
+plus 9 tools (`apply_script`, `upsert_map_event`, `upsert_database`, `allocate_namespace`,
+`validate`, `simulate_battle`, `diff`, `commit`, `rollback`). §4.5 also lists `compose_map`,
+`playtest`, and `coverage` — omitted here because they front L3.5/L5 (M7/M8), which
 don't exist in this repo yet; adding tool stubs for layers with nothing behind them would violate
-decision A (MCP is a thin transport over real logic, not the other way around).
+decision A (MCP is a thin transport over real logic, not the other way around). `simulate_battle`
+runs against the *in-memory* session, so an agent can ask "did that buff break the boss fight?"
+about an edit it has not committed.
 
 `apply_script` and `upsert_map_event` are deliberately split: `upsert_map_event` is a full-replace
 declarative write of one event's metadata + pages (conditions/trigger/image — nothing that makes
@@ -186,6 +193,63 @@ whatever row already has that id (or a new row via `IdAllocator.allocEntityId`),
 per-table Zod schemas for all ten tables is exactly the upfront modeling §4.5 says not to build
 ahead of need. `ProjectSession.dirtyFiles()` (a small core addition, same pattern as `RefIndex.entries()`
 for M4) backs the `diff` tool.
+
+### L4.5 battle simulator (`packages/battlesim`)
+
+`simulate(session, spec)` runs N battles in pure Node and returns one `BattleReport` — win rate,
+turn stats, TTK per side, damage distribution, one-shot-kill and stalemate flags, plus `warnings`
+that name those last two in prose. The premise (plan §3 M6) is that MZ's damage formula is an
+`eval` string, so the whole of L5's cost buys nothing here: no PIXI, no browser, ~0.7s for 1000
+trials.
+
+Three files, in the order data flows through them:
+- `battler.ts` — the `Game_BattlerBase`/`Game_Actor`/`Game_Enemy` subset: params from class curve
+  + equipment + traits, xparams/sparams, element and state rates, state turns, regeneration.
+- `action.ts` — `Game_Action`: hit/evade/crit rolls and `makeDamageValue()`. Its step order
+  (element → pdr/mdr → rec → critical → variance → guard → round) is a port, not a paraphrase;
+  reordering variance and guard alone moves mean damage several percent, which is most of the
+  acceptance criterion's 10% budget. Formulas run through `node:vm` with only `{a, b, v, Math}`
+  in scope — the string comes from a data file an agent may have just written, and MZ's own
+  "any failure evaluates to 0" contract is kept. No host object crosses into that context
+  (`a`/`b` are null-prototype number bags, `Math.random`/`v` are installed by a script compiled
+  *inside* it), because one reachable host function is `x.constructor.constructor` away from
+  the host realm.
+- `simulate.ts` — the turn loop (turn-based, never TPB), the trial runner and the aggregation.
+
+`battler.ts` and `action.ts` each carry an explicit list of what is *not* modeled (buffs/debuffs,
+TP, extra action times, counter/reflect/substitute, dual wield) rather than approximating it
+silently. The one thing that is a judgement call and not an engine port is action *selection* —
+MZ leaves that to the player — so the chosen policy is heuristic and is echoed back in the
+report's `policy` field, because a party that never heals loses fights a real player wins.
+
+**M6's acceptance criterion is not met, and cannot be met from inside this repo.** The plan (§3 M6)
+asks for "對 MZ 內建範例的幾組敵我配置，模擬勝率與實際遊戲測試誤差 < 10%", which needs three
+things this repo does not have and cannot legally or practically acquire on its own:
+
+1. **MZ's sample project database.** The built-in Actors/Classes/Enemies/Troops/Skills rows are
+   shipped with the (paid, licensed) editor — `fixtures/minimal-project` is a hand-written minimal
+   project, so its numbers are plausible, not RPG Maker's. Simulating a fixture matchup and
+   comparing it to itself measures nothing.
+2. **A real playtest to compare against.** The right-hand side of "誤差 < 10%" is a human (or M8's
+   headless runtime, which is M8) playing those same matchups enough times for a win rate to mean
+   something. There is no runtime here yet — that is precisely what M6 was scheduled *before*.
+3. **Agreement on the parts MZ leaves to the player.** A win rate is a function of action policy as
+   much as of damage math; a party that never heals loses fights a human wins. `BattleReport.policy`
+   states the policy this simulator used, so a future comparison is at least apples-to-apples.
+
+What is verified instead is the half that is checkable without a game, and it is the half a 10%
+drift would come from: exact hand-computed damage for known params — formula evaluation, element
+rate, guard division, the variance band's bounds — plus MZ's own "broken formula evaluates to 0"
+contract (`test/action.test.ts`). If the ported arithmetic is right, the remaining error is policy
+and unmodeled features, both listed above and in `battler.ts`.
+
+To close it later: point `simulate()` at a real MZ project (it takes any `ProjectSession`), run the
+same matchups in M8's headless runtime once that exists, and compare win rates. No change to this
+package should be needed — which is why it is listed here rather than left as a TODO in code.
+
+The fixture grew for this milestone: `fixtures/minimal-project/data/` gained Classes, Enemies,
+Troops, States, Weapons and Armors (a real MZ project always has them), and Skills 1/2 became
+real Attack/Guard rows because MZ hardcodes those ids in `attackSkillId()`/`guardSkillId()`.
 
 ### Legacy JS carried over
 
