@@ -36,8 +36,9 @@ M10 done (`packages/gamegen`: spec → whole playable game, plus the walkthrough
 that proves it is finishable — the one-sentence-to-spec half is the MCP client's,
 see below). M11 done (`deploy` + `create_project` in `packages/core`, plus the
 `templates/blank-project` tree — both halves of the editor-parity table's last
-two rows, minus what needs the paid editor's runtime, see below). L2 Tier 3 not
-started.
+two rows, minus what needs the paid editor's runtime, see below). §8.1-1 done
+(namespace registry + `quest.herb.started` name sugar across core/compiler/mcp,
+closing M6.5 gap #2 — see below). L2 Tier 3 not started.
 
 ## Commands
 
@@ -143,9 +144,11 @@ throw on a shape it doesn't understand.
 `dsl/` is the YAML authoring surface an LLM/human writes (plan §4.2), a Zod
 schema (`schema.ts`) over a much smaller "Step" shape, `parse.ts` compiling
 YAML → IR, `print.ts` decompiling IR → YAML (used to show an LLM an existing
-event as text). The DSL addresses switches/variables by raw numeric id —
-the plan's namespaced expression sugar (`quest.herb.started`) is a
-`IdAllocator`-aware layer that would sit on top of this and is not built yet.
+event as text). Switch/variable fields take a raw numeric id or a
+`namespace.member` name (§8.1-1, see "Namespaces and DSL name sugar" below):
+names are resolved at parse time through the `DslNameResolver` the caller
+hands `parseDsl`, so the IR and everything downstream stays numeric and this
+package still doesn't depend on core.
 
 **Tier 2 (M7.5)** adds the rest of §4.3's list. Most of it — 22 command groups
 whose whole payload is a flat positional parameter list (gold/item/weapon/armor,
@@ -666,6 +669,46 @@ positional parameter of a Show Picture command survives (that case is what a key
 collector would delete). To close the rest: run `create_project --runtimeFrom <an installed
 project>` on a licensed machine, open the result in the editor, then `deploy` it and play it.
 Nothing in `src/` should need to change.
+
+### Namespaces and DSL name sugar (§8.1-1)
+
+Plan §8's top-ranked gap, one feature in three halves:
+
+- `packages/core/src/namespaces.ts` — `NamespaceRegistry`, the allocator's own
+  occupancy record, closing M6.5 gap #2. It is a *data file*
+  (`data/RmmzKitNamespaces.json`) so it rides the ProjectSession transaction
+  unchanged — commit/rollback/drift all just work, and MZ ignores unknown
+  files under `data/` (plugins park their own JSON there routinely).
+  System.json's name arrays are still written (`quest.herb.started`) but they
+  are a mirror for a human skimming the editor, not the record: `update_system`
+  replaces those arrays whole, and before the registry that made every
+  allocated id look free again. A slot is free only when it is unnamed *and*
+  unregistered, so a hand-named editor switch still counts as taken. `deploy`
+  excludes the file from builds for the reason it excludes `Game.rmmzproject`:
+  dev metadata, and it names every quest flag.
+- `allocate_namespace` takes member *names* (`switches: ["started", "done"]`)
+  as well as counts (members "0".."n-1") and returns member→id. Members may
+  not contain `.`, so `namespace.member` splits unambiguously at the last dot.
+  Re-allocating a member the namespace already owns is refused (naming the
+  existing ids) rather than served: the registry keeps one id per member, so a
+  second allocation would leave the first named in System.json but unregistered
+  — free again the moment `update_system` replaces the names array, which is
+  gap #2 reopened on an id live events already reference.
+- Resolution happens at the edges, never in the middle: `parseDsl` takes a
+  `DslNameResolver`, `printDsl` the inverse `DslNameLookup` (so
+  `rmmz://map/{id}`'s decompiled scripts read `quest.herb.started`, not `11`),
+  and `apply_script` / `upsert_map_event`'s page conditions
+  (`switch1Id`/`switch2Id`/`variableId`) wire both to the registry.
+  `rmmz://project/summary` lists the namespaces — the asset-catalog argument:
+  a model that can see what names exist doesn't invent ones that don't. An
+  unknown name (or a named id with no resolver) is an error that names what
+  *is* known, never a silent switch NaN/0.
+
+Deliberately not done: names in `run_scenario` steps (the scenario comes from
+the same client that just allocated the ids; add when a caller wants it), the
+plan's full `when: "!quest.herb.started"` expression language (`!`/`&&` — this
+resolver is the layer it would compile against), and §4.4's quest-graph rules
+(unblocked by the namespace model, but they are M4 work nobody has scheduled).
 
 ### Legacy JS carried over
 

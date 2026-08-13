@@ -44,6 +44,45 @@ describe('DSL (YAML)', () => {
     expect(roundTripped).toEqual(nodes);
   });
 
+  it('resolves namespace.member names through the resolver, everywhere an id appears', () => {
+    const fail = (name: string): never => {
+      throw new Error(`unknown ${name}`);
+    };
+    const names = {
+      switch: (name: string) => ({ 'quest.herb.started': 11, 'quest.herb.done': 12 })[name] ?? fail(name),
+      variable: (name: string) => ({ 'quest.herb.count': 7 })[name] ?? fail(name),
+    };
+    const yaml = `
+- setSwitch: { from: quest.herb.started, value: true }
+- setVariable: { from: quest.herb.count, op: add, value: 1 }
+- if:
+    switch: quest.herb.started
+    then:
+      - if:
+          variable: quest.herb.count
+          cmp: gte
+          value: 3
+          then:
+            - setSwitch: { from: quest.herb.done, value: true }
+`;
+    const nodes = parseDsl(yaml, names);
+    expect(nodes[0]).toEqual({ kind: 'setSwitch', from: 11, to: 11, value: true });
+    expect(nodes[1]).toMatchObject({ kind: 'setVariable', from: 7, to: 7 });
+    expect(nodes[2]).toMatchObject({ condition: { type: 'switch', switchId: 11 } });
+
+    // Inverse: print with the lookup and the ids come back out as names.
+    const printed = printDsl(nodes, {
+      switch: (id) => ({ 11: 'quest.herb.started', 12: 'quest.herb.done' })[id],
+      variable: (id) => ({ 7: 'quest.herb.count' })[id],
+    });
+    expect(printed).toContain('quest.herb.done');
+    expect(parseDsl(printed, names)).toEqual(nodes);
+  });
+
+  it('a named id with no resolver is an error, not switch NaN', () => {
+    expect(() => parseDsl('- setSwitch: { from: quest.herb.started, value: true }')).toThrow(/name resolver/);
+  });
+
   it('rejects malformed DSL with a schema error rather than compiling garbage', () => {
     expect(() => parseDsl('- say: { nope: true }')).toThrow();
   });

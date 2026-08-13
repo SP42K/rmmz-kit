@@ -7,6 +7,8 @@ export { EditorLockSnapshot } from './editorLock.js';
 export { GitRepo } from './git.js';
 export { IdAllocator } from './idAllocator.js';
 export type { NamespaceAllocation } from './idAllocator.js';
+export { NamespaceRegistry, NAMESPACES_FILE } from './namespaces.js';
+export type { NamespaceField, NamespacesData } from './namespaces.js';
 export { RefIndex } from './refIndex.js';
 export type { RefKind, RefLocation } from './refIndex.js';
 export { deployProject } from './deploy.js';

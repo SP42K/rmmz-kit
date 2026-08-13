@@ -5,16 +5,25 @@ import { IfPayload, MoveStepSpec, SayPayload, Step } from './schema.js';
 /** Reverse of MOVE_ROUTE_CODES, so a printed route reads `moveLeft` rather than `2`. */
 const ROUTE_NAMES = new Map<number, string>(Object.entries(MOVE_ROUTE_CODES).map(([name, code]) => [code, name]));
 
-/** Inverse of parse.ts: turns decompiled IR back into the YAML DSL, so an LLM can read an existing event (plan §3 M3). */
-export function printDsl(nodes: Node[]): string {
-  return stringify(nodes.map(nodeToStep));
+/**
+ * Inverse of parseDsl's DslNameResolver: id -> `namespace.member`, or undefined
+ * for an id no namespace owns (printed as its number, exactly as before).
+ */
+export interface DslNameLookup {
+  switch?(id: number): string | undefined;
+  variable?(id: number): string | undefined;
 }
 
-function nodeToStep(node: Node): Step {
+/** Inverse of parse.ts: turns decompiled IR back into the YAML DSL, so an LLM can read an existing event (plan §3 M3). */
+export function printDsl(nodes: Node[], names?: DslNameLookup): string {
+  return stringify(nodes.map((node) => nodeToStep(node, names)));
+}
+
+function nodeToStep(node: Node, names?: DslNameLookup): Step {
   switch (node.kind) {
     case 'raw':
       return {
-        raw: { code: node.code, parameters: node.parameters, body: node.body?.map(nodeToStep) },
+        raw: { code: node.code, parameters: node.parameters, body: node.body?.map((n) => nodeToStep(n, names)) },
       };
 
     case 'text': {
@@ -30,9 +39,9 @@ function nodeToStep(node: Node): Step {
       return { comment: node.lines.length === 1 ? node.lines[0] : node.lines };
 
     case 'if': {
-      const condition = conditionToPayload(node.condition);
-      const payload: IfPayload = { ...condition, then: node.then.map(nodeToStep) };
-      if (node.else) payload.else = node.else.map(nodeToStep);
+      const condition = conditionToPayload(node.condition, names);
+      const payload: IfPayload = { ...condition, then: node.then.map((n) => nodeToStep(n, names)) };
+      if (node.else) payload.else = node.else.map((n) => nodeToStep(n, names));
       return { if: payload };
     }
 
@@ -48,7 +57,7 @@ function nodeToStep(node: Node): Step {
             `Show Choices has duplicate label ${JSON.stringify(label)}; the YAML DSL keys branches by label and cannot represent it`
           );
         }
-        branches[label] = node.branches[i].map(nodeToStep);
+        branches[label] = node.branches[i].map((n) => nodeToStep(n, names));
       });
       return {
         choice: {
@@ -57,19 +66,32 @@ function nodeToStep(node: Node): Step {
           positionType: node.positionType,
           background: node.background,
           branches,
-          cancel: node.cancelBranch?.map(nodeToStep),
+          cancel: node.cancelBranch?.map((n) => nodeToStep(n, names)),
         },
       };
     }
 
     case 'loop':
-      return { loop: { body: node.body.map(nodeToStep) } };
+      return { loop: { body: node.body.map((n) => nodeToStep(n, names)) } };
 
     case 'setSwitch':
-      return { setSwitch: { from: node.from, to: node.to, value: node.value } };
+      return {
+        setSwitch: {
+          from: names?.switch?.(node.from) ?? node.from,
+          to: names?.switch?.(node.to) ?? node.to,
+          value: node.value,
+        },
+      };
 
     case 'setVariable':
-      return { setVariable: { from: node.from, to: node.to, op: node.op, value: node.value } };
+      return {
+        setVariable: {
+          from: names?.variable?.(node.from) ?? node.from,
+          to: names?.variable?.(node.to) ?? node.to,
+          op: node.op,
+          value: node.value,
+        },
+      };
 
     case 'setSelfSwitch':
       return { setSelfSwitch: { ch: node.ch, value: node.value } };
@@ -107,9 +129,9 @@ function nodeToStep(node: Node): Step {
           troopId: node.troopId,
           canEscape: node.canEscape,
           canLose: node.canLose,
-          win: node.win?.map(nodeToStep),
-          escape: node.escape?.map(nodeToStep),
-          lose: node.lose?.map(nodeToStep),
+          win: node.win?.map((n) => nodeToStep(n, names)),
+          escape: node.escape?.map((n) => nodeToStep(n, names)),
+          lose: node.lose?.map((n) => nodeToStep(n, names)),
         },
       };
 
@@ -141,12 +163,19 @@ function routeStepToSpec(step: MoveStep): MoveStepSpec {
   return { step: name ?? step.code, ...(step.parameters ? { parameters: step.parameters } : {}) };
 }
 
-function conditionToPayload(condition: Condition): Pick<IfPayload, 'switch' | 'is' | 'variable' | 'cmp' | 'value' | 'script' | 'raw'> {
+function conditionToPayload(
+  condition: Condition,
+  names?: DslNameLookup
+): Pick<IfPayload, 'switch' | 'is' | 'variable' | 'cmp' | 'value' | 'script' | 'raw'> {
   switch (condition.type) {
     case 'switch':
-      return { switch: condition.switchId, is: condition.value };
+      return { switch: names?.switch?.(condition.switchId) ?? condition.switchId, is: condition.value };
     case 'variable':
-      return { variable: condition.variableId, cmp: condition.cmp, value: condition.value };
+      return {
+        variable: names?.variable?.(condition.variableId) ?? condition.variableId,
+        cmp: condition.cmp,
+        value: condition.value,
+      };
     case 'script':
       return { script: condition.code };
     case 'raw':

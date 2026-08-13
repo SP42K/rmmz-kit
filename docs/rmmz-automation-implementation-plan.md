@@ -319,7 +319,7 @@ MZ 的傷害公式是 eval 字串（`a.atk * 4 - b.def * 2`），可以在 Node 
 | # | 缺口 | 代價 | 排程 |
 |---|---|---|---|
 | 1 | ~~`tilesets` 新增列只寫 `{name, id}`，沒有 8192 長度的 `flags`；MZ `Game_Map.checkPassage` 讀 `this.tileset().flags[tileId]`，玩家踏第一步就爆~~ | 中 | **M7 已修**：`tables.ts` 的 `NEW_ROW_DEFAULTS` 只在「這個 id 還沒有列」時補上 `flags` / `tilesetNames` / `mode`，不碰既有列。清單刻意保持接近空的——per-table schema 仍是 §4.5 說不要提前做的建模，要進這張表得先講得出它擋掉哪一種 crash |
-| 2 | `update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch | 中 | **M7.5 或 `allocate_namespace` 下次動到時**。修法不是在 `update_system` 加特例，而是讓 allocator 有自己的佔用紀錄（namespace 表），這也是 §4.2 具名 switch/variable sugar 遲早要做的事。**M7.5 沒修**：M7.5 的範圍是事件命令編譯器，跟 allocator 佔用紀錄沒有交集，硬塞進來只會讓兩件事都難 review；順延到 §4.2 sugar 那一層或 `allocate_namespace` 下次動到時 |
+| 2 | ~~`update_system` 的 `patch.switches` / `patch.variables` 整塊替換陣列，而這兩個名稱陣列是 `IdAllocator.findContiguousFree` 判斷「已佔用」的唯一依據（free = 未命名）。被覆寫後已配發的 id 看起來是空的，下一次 `allocate_namespace` 會發出事件正在寫的 switch~~ | 中 | **已於 §8.1-1 修掉**：allocator 的佔用改讀自己的 `NamespaceRegistry`（`data/RmmzKitNamespaces.json`，與資料檔同一事務），System.json 名稱陣列降為編輯器裡給人看的鏡像；修法正是本欄當初寫的那個（namespace 表，同時是具名 sugar 的地基），細節見 `CLAUDE.md`「Namespaces and DSL name sugar」 |
 | 3 | ~~`upsertDatabase` 就地 mutate `data`：第 2 筆的 id 檢查 throw 時，第 1 筆已經寫進去了，而 `updateFile` 還沒把檔案標成 dirty——於是 `diff` 看不到它、`rollback()`（只重讀 dirty 檔）也救不回來，下一次不相干的編輯會把這半套改動一起 commit。**此為 M6.5 之前就有的既存問題**，非本次引入~~ | 中 | **已於 M7 修掉**：`updateFile` 改成先 `dirty.add()` 再跑 updater。這比當初設想的「複製 `[...data]` 再寫回」小得多，也不動 `allocEntityId` 讀 session 即時陣列的行為；代價只是 updater 尚未 mutate 就 throw 時多寫一次位元組相同的檔案 |
 
 ---
@@ -875,10 +875,14 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
 
 ### 8.1 本 repo 內做得完的待辦（建議順序）
 
-1. **§4.2 具名 switch/variable sugar**（`quest.herb.started`）— DSL 至今只吃數字 id。
+1. ~~**§4.2 具名 switch/variable sugar**（`quest.herb.started`）— DSL 至今只吃數字 id。
    槓桿最大的一項，一次堵三件事：它本身、M6.5 缺口 #2 的修法（allocator 需要自己的
    namespace 佔用紀錄，而非讀 System.json 名稱陣列）、§4.4 quest-graph/softlock 分析的
-   前置（沒有 namespace 模型就沒有圖可分析）。
+   前置（沒有 namespace 模型就沒有圖可分析）。~~ **已交付**：三件事裡前兩件關掉（
+   `NamespaceRegistry` ＋ DSL / `upsert_map_event` 頁條件的名稱解析，見 `CLAUDE.md`
+   「Namespaces and DSL name sugar」）；第三件（quest-graph 規則本身）是 M4 的活，
+   前置已就位但仍未排程。完整表達式語言（`when: "!quest.herb.started"` 的 `!`/`&&`）
+   也仍未做——resolver 就是它要編譯到的那一層。
 2. **§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
    typed node 已拿得到這些 id，技術阻礙已消失，只是沒人排程；`references.ts` 模式現成，
    半天級。
@@ -892,7 +896,7 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
 
 | 項目 | 觸發條件 |
 |---|---|
-| M6.5 #2（allocator 佔用紀錄） | 併入 §8.1-1 |
+| ~~M6.5 #2（allocator 佔用紀錄）~~ | ~~併入 §8.1-1~~ 已隨 §8.1-1 交付 |
 | M7 #1（`composeMap` throw 前已寫入 session） | 出現第二個「先驗再落地」呼叫端 |
 | M7 #2（`resizeMap` 全圖重算）＋ autotile 越界 clamp | 對照過真實編輯器輸出 |
 | M7.6 插件重排/刪除、`readRaw` 無 drift 檢查 | 有呼叫端／有人踩到 |

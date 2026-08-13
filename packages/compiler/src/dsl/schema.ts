@@ -3,10 +3,10 @@ import { SIMPLE_COMMANDS, SIMPLE_KINDS, type SimpleFields, type SimpleKind } fro
 
 /**
  * The YAML authoring surface (plan §4.2): what an LLM/human writes. Deliberately
- * narrower than ir.ts's Node — no indent, no command codes, switches/variables
- * addressed by raw numeric id (the plan's `quest.herb.started`-style namespaced
- * expression language is a separate, not-yet-built layer on top of IdAllocator;
- * this DSL is the id-based floor it would compile down to).
+ * narrower than ir.ts's Node — no indent, no command codes. Switches/variables
+ * take a raw numeric id or a `namespace.member` name (§4.2's sugar, §8.1-1):
+ * names are resolved to ids at parse time via the resolver parseDsl is given,
+ * so the IR — and everything downstream of it — stays numeric.
  */
 export type Step =
   | { say: string | SayPayload }
@@ -14,8 +14,8 @@ export type Step =
   | { if: IfPayload }
   | { choice: ChoicePayload }
   | { loop: { body: Step[] } }
-  | { setSwitch: { from: number; to?: number; value: boolean } }
-  | { setVariable: { from: number; to?: number; op?: VariableOp; value: number } }
+  | { setSwitch: { from: number | string; to?: number | string; value: boolean } }
+  | { setVariable: { from: number | string; to?: number | string; op?: VariableOp; value: number } }
   | { setSelfSwitch: { ch: 'A' | 'B' | 'C' | 'D'; value: boolean } }
   | { callCommonEvent: number }
   | { transfer: { mapId: number; x: number; y: number; direction?: number; fade?: number } }
@@ -80,9 +80,9 @@ export interface SayPayload {
 }
 
 export interface IfPayload {
-  switch?: number;
+  switch?: number | string;
   is?: boolean;
-  variable?: number;
+  variable?: number | string;
   cmp?: 'eq' | 'gte' | 'lte' | 'gt' | 'lt' | 'neq';
   value?: number;
   script?: string;
@@ -104,6 +104,9 @@ export interface ChoicePayload {
 
 const stepArray = (): z.ZodType<Step[]> => z.lazy(() => z.array(StepSchema));
 
+/** A raw numeric id, or a `namespace.member` name parseDsl's resolver turns into one. */
+const idOrName = z.union([z.number().int(), z.string()]);
+
 /**
  * Every payload object is `.strict()`, not just the outer step wrappers. All
  * of these fields are optional, so a stripping schema would accept `els:` /
@@ -124,9 +127,9 @@ const SayPayloadSchema: z.ZodType<SayPayload> = z
 const IfPayloadSchema: z.ZodType<IfPayload> = z.lazy(() =>
   z
     .object({
-      switch: z.number().int().optional(),
+      switch: idOrName.optional(),
       is: z.boolean().optional(),
-      variable: z.number().int().optional(),
+      variable: idOrName.optional(),
       cmp: z.enum(['eq', 'gte', 'lte', 'gt', 'lt', 'neq']).optional(),
       value: z.number().optional(),
       script: z.string().optional(),
@@ -223,15 +226,15 @@ export const StepSchema: z.ZodType<Step> = z.lazy(() =>
     z.object({ loop: z.object({ body: stepArray() }).strict() }).strict(),
     z
       .object({
-        setSwitch: z.object({ from: z.number().int(), to: z.number().int().optional(), value: z.boolean() }).strict(),
+        setSwitch: z.object({ from: idOrName, to: idOrName.optional(), value: z.boolean() }).strict(),
       })
       .strict(),
     z
       .object({
         setVariable: z
           .object({
-            from: z.number().int(),
-            to: z.number().int().optional(),
+            from: idOrName,
+            to: idOrName.optional(),
             op: z.enum(['set', 'add', 'sub', 'mul', 'div', 'mod']).optional(),
             value: z.number(),
           })

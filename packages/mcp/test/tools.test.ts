@@ -67,6 +67,47 @@ describe('tools', () => {
     expect(list[1].parameters[0]).toBe('Potions, 100G each!');
   });
 
+  it('allocate_namespace names flow through applyScript and page conditions (§8.1-1 sugar)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const alloc = tools.allocateNamespace(session, 'quest.herb', { switches: ['started', 'done'], variables: ['count'] });
+
+    tools.upsertMapEvent(session, 1, {
+      x: 3,
+      y: 4,
+      pages: [{}, { conditions: { switch1Id: 'quest.herb.started', switch1Valid: true } }],
+    });
+    tools.applyScript(
+      session,
+      { map: 1, event: 2, page: 1 },
+      ['- setSwitch: { from: quest.herb.started, value: true }', '- setVariable: { from: quest.herb.count, op: add, value: 1 }'].join('\n')
+    );
+
+    const map = session.readFile<MapData>('Map001.json');
+    const event = map.events[2]!;
+    expect(event.pages[1].conditions.switch1Id).toBe(alloc.switches.started);
+    const list = event.pages[0].list;
+    expect(list[0]).toMatchObject({ code: 121, parameters: [alloc.switches.started, alloc.switches.started, 0] });
+    expect(list[1].parameters[0]).toBe(alloc.variables.count);
+  });
+
+  it('an unknown name rejects the write and names what is known', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    tools.allocateNamespace(session, 'quest.herb', { switches: ['started'] });
+    tools.upsertMapEvent(session, 1, { x: 3, y: 4, pages: [{}] });
+
+    expect(() =>
+      tools.applyScript(session, { map: 1, event: 2, page: 1 }, '- setSwitch: { from: quest.herb.finished, value: true }')
+    ).toThrow(/quest\.herb\.started/);
+    expect(() =>
+      tools.upsertMapEvent(session, 1, { x: 0, y: 0, pages: [{ conditions: { switch1Id: 'quest.herb.finished' } }] })
+    ).toThrow(/quest\.herb\.started/);
+  });
+
   it('applyScript rejects a page that was never created', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
@@ -130,8 +171,8 @@ describe('tools', () => {
     const session = await openProject(dir);
 
     const alloc = tools.allocateNamespace(session, 'quest.herb', { switches: 2 });
-    expect(alloc.switches).toHaveLength(2);
-    expect(alloc.switches[1]).toBe(alloc.switches[0] + 1);
+    expect(Object.keys(alloc.switches)).toEqual(['0', '1']);
+    expect(alloc.switches['1']).toBe(alloc.switches['0'] + 1);
   });
 
   it('updateSystem shallow-merges, replacing a nested field whole and naming keys the file lacked', async () => {

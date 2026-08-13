@@ -160,7 +160,10 @@ const MoveStepSchema = z.union([
 
 const PageSpecSchema = z
   .object({
-    conditions: z.record(z.string(), z.unknown()).optional(),
+    conditions: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('EventConditions fields; switch1Id/switch2Id/variableId also take an allocate_namespace name'),
     trigger: z.number().int().optional(),
     image: z.record(z.string(), z.unknown()).optional(),
     moveType: z.number().int().optional(),
@@ -188,7 +191,9 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   server.registerTool(
     'apply_script',
     {
-      description: 'Compile a YAML DSL script (plan §4.2) and write it as a map event page or common event\'s command list.',
+      description:
+        'Compile a YAML DSL script (plan §4.2) and write it as a map event page or common event\'s command list. ' +
+        'Switch/variable fields take a numeric id or an allocate_namespace name like "quest.herb.started".',
       inputSchema: { target: ScriptTargetSchema, dsl: z.string() },
     },
     async ({ target, dsl }) => {
@@ -401,11 +406,17 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     async (spec) => json(await tools.importAsset(session, spec))
   );
 
+  const memberCounts = z
+    .union([z.number().int().nonnegative(), z.array(z.string())])
+    .optional()
+    .describe('A count (members named 0..n-1) or a list of member names, e.g. ["started", "done"]');
   server.registerTool(
     'allocate_namespace',
     {
-      description: 'Allocate a contiguous, named block of switch/variable ids (System.json) for a quest/feature namespace.',
-      inputSchema: { namespace: z.string(), switches: z.number().int().nonnegative().optional(), variables: z.number().int().nonnegative().optional() },
+      description:
+        'Allocate a contiguous block of switch/variable ids for a quest/feature namespace. Returns member->id; from then on ' +
+        '"namespace.member" (e.g. "quest.herb.started") works anywhere apply_script or a page condition takes a switch/variable id.',
+      inputSchema: { namespace: z.string(), switches: memberCounts, variables: memberCounts },
     },
     async ({ namespace, switches, variables }) => json(tools.allocateNamespace(session, namespace, { switches, variables }))
   );
