@@ -1,7 +1,27 @@
 import { readdir, stat } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 const PROJECT_FILE_NAME = 'Game.rmmzproject';
+
+/**
+ * `file` relative to `root`, always with `/` separators — the form every
+ * root-relative match in this package is written against (`writeRaw`'s paths,
+ * `deploy`'s EXCLUDED/prunable roots, `createProject`'s RUNTIME_SKIP).
+ *
+ * The realpath fallback is not decoration. Windows hands out two spellings of
+ * the same directory — `C:\Users\RUNNER~1` and `C:\Users\runneradmin` — and
+ * `os.tmpdir()` returns the 8.3 short one on a GitHub runner. Spell the two
+ * ends differently and `path.relative` walks up to the common ancestor instead,
+ * so every match below it misses *silently*: the project marker ships, nothing
+ * is pruned, the AutoTest warning never fires. `realpathSync.native` resolves
+ * both spellings, and only runs on the path that is already wrong.
+ */
+export function relativeUnderRoot(root: string, file: string): string {
+  let rel = path.relative(root, file);
+  if (rel.startsWith('..')) rel = path.relative(realpathSync.native(root), realpathSync.native(file));
+  return rel.split(path.sep).join('/');
+}
 
 /**
  * Confirms `dirPath` is an RPG Maker MZ project root by looking for its

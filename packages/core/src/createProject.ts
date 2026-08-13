@@ -2,7 +2,7 @@ import { cp, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseJson, stringifyCompact } from './io/format.js';
-import { assertProjectRoot } from './io/projectRoot.js';
+import { assertProjectRoot, relativeUnderRoot } from './io/projectRoot.js';
 import { GitRepo } from './git.js';
 import type { SystemData } from './types/mz.js';
 
@@ -129,7 +129,7 @@ async function copyRuntime(source: string, target: string): Promise<void> {
       recursive: true,
       force: true,
       filter: (src) => {
-        const rel = path.relative(source, src).split(path.sep).join('/');
+        const rel = relativeUnderRoot(source, src);
         return !RUNTIME_SKIP.some((skip) => rel === skip || rel.startsWith(`${skip}/`));
       },
     }).catch((err: NodeJS.ErrnoException) => {
