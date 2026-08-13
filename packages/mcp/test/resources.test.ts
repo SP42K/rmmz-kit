@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { openProject } from '@rmmz-kit/core';
 import { assetCatalog, databaseResource, mapResource, projectSummary } from '../src/resources.js';
-import { applyScript, upsertMapEvent } from '../src/tools.js';
+import { allocateNamespace, applyScript, upsertMapEvent } from '../src/tools.js';
 import { makeTestProject } from './testProject.js';
 
 describe('resources', () => {
@@ -37,6 +37,21 @@ describe('resources', () => {
     const map = mapResource(session, 1) as { events: Array<{ pages: Array<{ script?: string }> } | null> };
     const script = map.events[id]?.pages[0].script;
     expect(script).toContain('say');
+  });
+
+  it('map/{id} prints allocated ids back as their names; summary lists the namespaces', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    const alloc = allocateNamespace(session, 'quest.herb', { switches: ['started'] });
+    const id = upsertMapEvent(session, 1, { x: 0, y: 0, pages: [{}] });
+    applyScript(session, { map: 1, event: id, page: 1 }, '- setSwitch: { from: quest.herb.started, value: true }\n');
+
+    const map = mapResource(session, 1) as { events: Array<{ pages: Array<{ script?: string }> } | null> };
+    expect(map.events[id]?.pages[0].script).toContain('quest.herb.started');
+
+    const summary = projectSummary(session) as { namespaces: Record<string, { switches: Record<string, number> }> };
+    expect(summary.namespaces['quest.herb'].switches.started).toBe(alloc.switches.started);
   });
 
   it('map/{id} throws for a nonexistent map', async () => {

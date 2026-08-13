@@ -12,26 +12,53 @@ import {
   StepListSchema,
 } from './schema.js';
 
-/** Parses a YAML DSL document (plan §4.2) into IR nodes ready for emit.ts's compile(). */
-export function parseDsl(yamlText: string): Node[] {
-  const raw = parseYaml(yamlText) ?? [];
-  const steps = StepListSchema.parse(raw);
-  return steps.map(stepToNode);
+/**
+ * Turns a `namespace.member` name into an id (§4.2's sugar). The registry that
+ * knows the mapping lives in core, which this package deliberately doesn't
+ * depend on — so the caller passes the lookup in, and a parse with no resolver
+ * simply doesn't accept names.
+ */
+export interface DslNameResolver {
+  switch(name: string): number;
+  variable(name: string): number;
 }
 
-export function stepToNode(step: Step): Node {
+/** Parses a YAML DSL document (plan §4.2) into IR nodes ready for emit.ts's compile(). */
+export function parseDsl(yamlText: string, names?: DslNameResolver): Node[] {
+  const raw = parseYaml(yamlText) ?? [];
+  const steps = StepListSchema.parse(raw);
+  return steps.map((step) => stepToNode(step, names));
+}
+
+function resolveId(kind: keyof DslNameResolver, value: number | string, names: DslNameResolver | undefined): number {
+  if (typeof value === 'number') return value;
+  if (!names) {
+    throw new Error(`Named ${kind} ${JSON.stringify(value)} needs a name resolver; this parse only accepts numeric ids`);
+  }
+  return names[kind](value);
+}
+
+export function stepToNode(step: Step, names?: DslNameResolver): Node {
   if ('say' in step) return sayToNode(step.say);
   if ('comment' in step) return { kind: 'comment', lines: toLines(step.comment) };
-  if ('if' in step) return ifToNode(step.if);
-  if ('choice' in step) return choiceToNode(step.choice);
-  if ('loop' in step) return { kind: 'loop', body: step.loop.body.map(stepToNode) };
+  if ('if' in step) return ifToNode(step.if, names);
+  if ('choice' in step) return choiceToNode(step.choice, names);
+  if ('loop' in step) return { kind: 'loop', body: step.loop.body.map((s) => stepToNode(s, names)) };
   if ('setSwitch' in step) {
     const { from, to, value } = step.setSwitch;
-    return { kind: 'setSwitch', from, to: to ?? from, value };
+    const fromId = resolveId('switch', from, names);
+    return { kind: 'setSwitch', from: fromId, to: to === undefined ? fromId : resolveId('switch', to, names), value };
   }
   if ('setVariable' in step) {
     const { from, to, op, value } = step.setVariable;
-    return { kind: 'setVariable', from, to: to ?? from, op: op ?? 'set', value };
+    const fromId = resolveId('variable', from, names);
+    return {
+      kind: 'setVariable',
+      from: fromId,
+      to: to === undefined ? fromId : resolveId('variable', to, names),
+      op: op ?? 'set',
+      value,
+    };
   }
   if ('setSelfSwitch' in step) return { kind: 'setSelfSwitch', ...step.setSelfSwitch };
   if ('callCommonEvent' in step) return { kind: 'callCommonEvent', commonEventId: step.callCommonEvent };
@@ -49,7 +76,7 @@ export function stepToNode(step: Step): Node {
       kind: 'raw',
       code: step.raw.code,
       parameters: step.raw.parameters,
-      body: step.raw.body?.map(stepToNode),
+      body: step.raw.body?.map((s) => stepToNode(s, names)),
     };
   }
   if ('moveRoute' in step) return moveRouteToNode(step.moveRoute);
@@ -57,7 +84,7 @@ export function stepToNode(step: Step): Node {
     const { name, volume, pitch, pan } = step.playBgm;
     return { kind: 'playBgm', name, volume: volume ?? 90, pitch: pitch ?? 100, pan: pan ?? 0 };
   }
-  if ('battle' in step) return battleToNode(step.battle);
+  if ('battle' in step) return battleToNode(step.battle, names);
   if ('shop' in step) return shopToNode(step.shop);
   if ('script' in step) return { kind: 'script', lines: toLines(step.script) };
   if ('pluginCommand' in step) {
@@ -105,16 +132,16 @@ function routeCode(name: string): number {
   return code;
 }
 
-function battleToNode(payload: BattlePayload): Node {
+function battleToNode(payload: BattlePayload, names?: DslNameResolver): Node {
   return {
     kind: 'battle',
     designation: payload.designation ?? 0,
     troopId: payload.troopId ?? 1,
     canEscape: payload.canEscape ?? false,
     canLose: payload.canLose ?? false,
-    win: payload.win?.map(stepToNode),
-    escape: payload.escape?.map(stepToNode),
-    lose: payload.lose?.map(stepToNode),
+    win: payload.win?.map((s) => stepToNode(s, names)),
+    escape: payload.escape?.map((s) => stepToNode(s, names)),
+    lose: payload.lose?.map((s) => stepToNode(s, names)),
   };
 }
 
@@ -159,22 +186,34 @@ function sayToNode(say: string | SayPayload): Node {
   };
 }
 
-function ifToNode(payload: IfPayload): Node {
-  const condition = ifConditionOf(payload);
-  return { kind: 'if', condition, then: payload.then.map(stepToNode), else: payload.else?.map(stepToNode) };
+function ifToNode(payload: IfPayload, names?: DslNameResolver): Node {
+  const condition = ifConditionOf(payload, names);
+  return {
+    kind: 'if',
+    condition,
+    then: payload.then.map((s) => stepToNode(s, names)),
+    else: payload.else?.map((s) => stepToNode(s, names)),
+  };
 }
 
-function ifConditionOf(payload: IfPayload): Condition {
-  if (payload.switch !== undefined) return { type: 'switch', switchId: payload.switch, value: payload.is ?? true };
+function ifConditionOf(payload: IfPayload, names?: DslNameResolver): Condition {
+  if (payload.switch !== undefined) {
+    return { type: 'switch', switchId: resolveId('switch', payload.switch, names), value: payload.is ?? true };
+  }
   if (payload.variable !== undefined) {
-    return { type: 'variable', variableId: payload.variable, cmp: payload.cmp ?? 'eq', value: payload.value ?? 0 };
+    return {
+      type: 'variable',
+      variableId: resolveId('variable', payload.variable, names),
+      cmp: payload.cmp ?? 'eq',
+      value: payload.value ?? 0,
+    };
   }
   if (payload.script !== undefined) return { type: 'script', code: payload.script };
   if (payload.raw !== undefined) return { type: 'raw', parameters: payload.raw };
   throw new Error('if: needs one of switch, variable, script, or raw');
 }
 
-function choiceToNode(payload: ChoicePayload): Node {
+function choiceToNode(payload: ChoicePayload, names?: DslNameResolver): Node {
   const labels = Object.keys(payload.branches);
   // `branches` is a mapping, and JS object key order is only insertion order
   // for non-integer-like keys: `{ "10": …, "5": … }` enumerates as 5, 10, so a
@@ -199,8 +238,8 @@ function choiceToNode(payload: ChoicePayload): Node {
     defaultType: payload.defaultType ?? -1,
     positionType: payload.positionType ?? 2,
     background: payload.background ?? 0,
-    branches: labels.map((label) => payload.branches[label].map(stepToNode)),
-    cancelBranch: payload.cancel?.map(stepToNode),
+    branches: labels.map((label) => payload.branches[label].map((s) => stepToNode(s, names))),
+    cancelBranch: payload.cancel?.map((s) => stepToNode(s, names)),
   };
 }
 

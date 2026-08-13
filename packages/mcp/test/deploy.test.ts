@@ -57,6 +57,10 @@ describe('deploy / create_project', () => {
     const session = await openProject(dir);
     const out = await scratch('build');
 
+    // The namespace registry is dev metadata; a build must not ship it.
+    tools.allocateNamespace(session, 'quest.main', { switches: ['done'] });
+    await session.commit('test: allocate a namespace');
+
     await tools.deploy(session, { outDir: out });
 
     const server = await startPlaytestServer(out);
@@ -65,5 +69,6 @@ describe('deploy / create_project', () => {
     expect(system.status).toBe(200);
     expect((await system.json()).gameTitle).toBe('Servable');
     expect((await fetch(`${server.url}/Game.rmmzproject`)).status).toBe(404);
+    expect((await fetch(`${server.url}/data/RmmzKitNamespaces.json`)).status).toBe(404);
   });
 });

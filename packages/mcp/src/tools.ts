@@ -10,13 +10,14 @@ import type {
 } from '@rmmz-kit/core';
 import {
   IdAllocator,
+  NamespaceRegistry,
   createProject,
   deployProject,
   mapFileName,
   type CreateProjectOptions,
   type DeployOptions,
 } from '@rmmz-kit/core';
-import { buildMoveRoute, compile, moveStep, parseDsl, type MoveStepSpec } from '@rmmz-kit/compiler';
+import { buildMoveRoute, compile, moveStep, parseDsl, type DslNameResolver, type MoveStepSpec } from '@rmmz-kit/compiler';
 import { validateProject, type Finding } from '@rmmz-kit/validate';
 import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesim';
 import {
@@ -55,9 +56,23 @@ import { DATABASE_TABLES, NEW_ROW_DEFAULTS } from './tables.js';
 
 export type ScriptTarget = { map: number; event: number; page: number } | { commonEvent: number };
 
+/**
+ * The compiler's name sugar (§4.2), wired to the registry: this is where
+ * `quest.herb.started` in a DSL document (or a page condition) becomes an id.
+ * Built per call — the registry reads the in-memory session, so it always sees
+ * what allocate_namespace just did.
+ */
+function dslNames(session: ProjectSession): DslNameResolver {
+  const registry = new NamespaceRegistry(session);
+  return {
+    switch: (name) => registry.resolve('switches', name),
+    variable: (name) => registry.resolve('variables', name),
+  };
+}
+
 /** Compiles a DSL string via L2 and writes it as one page's (or one common event's) command list. */
 export function applyScript(session: ProjectSession, target: ScriptTarget, dsl: string): void {
-  const list = compile(parseDsl(dsl));
+  const list = compile(parseDsl(dsl, dslNames(session)));
 
   if ('commonEvent' in target) {
     session.updateFile<Array<CommonEvent | null>>('CommonEvents.json', (data) => {
@@ -113,8 +128,15 @@ function mergeKnown<T extends object>(defaults: T, overrides: Partial<T> | undef
   return { ...defaults, ...overrides };
 }
 
+/** EventConditions, with the three id fields also taking a `namespace.member` name (resolved before the page is built). */
+export type NamedEventConditions = Omit<EventConditions, 'switch1Id' | 'switch2Id' | 'variableId'> & {
+  switch1Id: number | string;
+  switch2Id: number | string;
+  variableId: number | string;
+};
+
 export interface PageSpec {
-  conditions?: Partial<EventConditions>;
+  conditions?: Partial<NamedEventConditions>;
   /** 0 action button, 1 player touch, 2 event touch, 3 autorun, 4 parallel. */
   trigger?: number;
   image?: Partial<EventImage>;
@@ -150,10 +172,24 @@ export interface MapEventSpec {
   pages: PageSpec[];
 }
 
+/** Resolves any named condition ids, so mergeKnown below only ever sees numbers. */
+function resolveConditions(
+  session: ProjectSession,
+  conditions: Partial<NamedEventConditions> | undefined
+): Partial<EventConditions> | undefined {
+  if (!conditions) return conditions;
+  const registry = new NamespaceRegistry(session);
+  const resolved: Record<string, unknown> = { ...conditions };
+  for (const [key, field] of [['switch1Id', 'switches'], ['switch2Id', 'switches'], ['variableId', 'variables']] as const) {
+    if (typeof resolved[key] === 'string') resolved[key] = registry.resolve(field, resolved[key]);
+  }
+  return resolved as Partial<EventConditions>;
+}
+
 /** `list` comes from the page being replaced (if any), never from the spec — see MapEventSpec.pages. */
-function buildPage(spec: PageSpec, list: EventCommand[] | undefined): EventPage {
+function buildPage(spec: PageSpec, conditions: Partial<EventConditions> | undefined, list: EventCommand[] | undefined): EventPage {
   return {
-    conditions: mergeKnown(DEFAULT_CONDITIONS, spec.conditions, 'page condition'),
+    conditions: mergeKnown(DEFAULT_CONDITIONS, conditions, 'page condition'),
     directionFix: spec.directionFix ?? false,
     image: mergeKnown(DEFAULT_IMAGE, spec.image, 'page image'),
     list: list ?? compile([]),
@@ -188,6 +224,9 @@ function buildPage(spec: PageSpec, list: EventCommand[] | undefined): EventPage 
  */
 export function upsertMapEvent(session: ProjectSession, mapId: number, spec: MapEventSpec): number {
   let id = spec.id;
+  // Resolved before updateFile: an unknown name must reject the whole spec, not
+  // throw after earlier pages were already applied to the in-memory map.
+  const conditions = spec.pages.map((page) => resolveConditions(session, page.conditions));
   session.updateFile<MapData>(mapFileName(mapId), (data) => {
     if (id === undefined) {
       id = 1;
@@ -200,7 +239,7 @@ export function upsertMapEvent(session: ProjectSession, mapId: number, spec: Map
       note: spec.note ?? '',
       x: spec.x,
       y: spec.y,
-      pages: spec.pages.map((page, i) => buildPage(page, previous?.pages[i]?.list)),
+      pages: spec.pages.map((page, i) => buildPage(page, conditions[i], previous?.pages[i]?.list)),
     };
     while (data.events.length <= id) data.events.push(null);
     data.events[id] = event;
@@ -366,7 +405,7 @@ export { importAsset } from './assets.js';
 export function allocateNamespace(
   session: ProjectSession,
   namespace: string,
-  counts: { switches?: number; variables?: number }
+  counts: { switches?: number | string[]; variables?: number | string[] }
 ) {
   return new IdAllocator(session).allocNamespace(namespace, counts);
 }

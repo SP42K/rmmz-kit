@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { openProject } from '../src/session.js';
 import { IdAllocator } from '../src/idAllocator.js';
+import { NamespaceRegistry, NAMESPACES_FILE } from '../src/namespaces.js';
 import { SystemData } from '../src/types/mz.js';
 import { makeTestProject } from './testProject.js';
 
@@ -18,15 +19,69 @@ describe('IdAllocator', () => {
     const allocator = new IdAllocator(session);
     const alloc = allocator.allocNamespace('quest.herb', { switches: 3, variables: 2 });
 
-    expect(alloc.switches).toHaveLength(3);
-    expect(alloc.switches[1]).toBe(alloc.switches[0] + 1);
-    expect(alloc.switches[2]).toBe(alloc.switches[0] + 2);
-    expect(alloc.variables).toHaveLength(2);
+    const switchIds = Object.values(alloc.switches);
+    expect(switchIds).toHaveLength(3);
+    expect(switchIds[1]).toBe(switchIds[0] + 1);
+    expect(switchIds[2]).toBe(switchIds[0] + 2);
+    expect(Object.values(alloc.variables)).toHaveLength(2);
 
     const system = session.readFile<SystemData>('System.json');
-    expect(system.switches[alloc.switches[0]]).toBe('quest.herb.0');
-    expect(system.switches[alloc.switches[2]]).toBe('quest.herb.2');
-    expect(system.variables[alloc.variables[0]]).toBe('quest.herb.0');
+    expect(system.switches[alloc.switches['0']]).toBe('quest.herb.0');
+    expect(system.switches[alloc.switches['2']]).toBe('quest.herb.2');
+    expect(system.variables[alloc.variables['0']]).toBe('quest.herb.0');
+  });
+
+  it('named members mirror into System.json and resolve back through the registry', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const alloc = new IdAllocator(session).allocNamespace('quest.herb', {
+      switches: ['started', 'done'],
+      variables: ['count'],
+    });
+
+    const system = session.readFile<SystemData>('System.json');
+    expect(system.switches[alloc.switches.started]).toBe('quest.herb.started');
+    expect(system.switches[alloc.switches.done]).toBe('quest.herb.done');
+    expect(system.variables[alloc.variables.count]).toBe('quest.herb.count');
+
+    const registry = new NamespaceRegistry(session);
+    expect(registry.resolve('switches', 'quest.herb.started')).toBe(alloc.switches.started);
+    expect(registry.resolve('variables', 'quest.herb.count')).toBe(alloc.variables.count);
+    expect(registry.nameOf('switches', alloc.switches.done)).toBe('quest.herb.done');
+    expect(() => registry.resolve('switches', 'quest.herb.finished')).toThrow(/quest\.herb\.started/);
+    expect(session.dirtyFiles()).toContain(NAMESPACES_FILE);
+  });
+
+  it('rejects member names that would break resolution', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const allocator = new IdAllocator(session);
+    expect(() => allocator.allocNamespace('q', { switches: ['a.b'] })).toThrow(/no '\.'/);
+    expect(() => allocator.allocNamespace('q', { switches: [''] })).toThrow(/non-empty/);
+    expect(() => allocator.allocNamespace('q', { switches: ['a', 'a'] })).toThrow(/Duplicate/);
+  });
+
+  it('occupancy survives System.json names being replaced whole (M6.5 gap #2)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const allocator = new IdAllocator(session);
+    const first = allocator.allocSwitches('quest.a', 2);
+
+    // What update_system's shallow merge does: the whole names array replaced,
+    // wiping the mirror. Before the registry this made `first` look free again.
+    session.updateFile<SystemData>('System.json', (data) => {
+      data.switches = ['', 'Hand Named'];
+    });
+
+    const second = allocator.allocSwitches('quest.b', 2);
+    expect(second).not.toContain(first[0]);
+    expect(second).not.toContain(first[1]);
   });
 
   it('does not reuse an already-named switch, and reclaims it after release', async () => {
@@ -43,6 +98,7 @@ describe('IdAllocator', () => {
     allocator.releaseSwitches(first);
     const system = session.readFile<SystemData>('System.json');
     expect(system.switches[first[0]]).toBe('');
+    expect(new NamespaceRegistry(session).names('switches')).not.toContain('quest.a.0');
 
     const third = allocator.allocSwitches('quest.c', 1);
     expect(third[0]).toBe(first[0]);
@@ -57,7 +113,7 @@ describe('IdAllocator', () => {
 
     expect(allocator.allocSwitches('quest.none', 0)).toEqual([]);
     expect(allocator.allocVariables('quest.none', -1)).toEqual([]);
-    expect(allocator.allocNamespace('quest.none', {})).toEqual({ namespace: 'quest.none', switches: [], variables: [] });
+    expect(allocator.allocNamespace('quest.none', {})).toEqual({ namespace: 'quest.none', switches: {}, variables: {} });
   });
 
   it('allocEntityId finds the first free hole, else the next id past the end', async () => {

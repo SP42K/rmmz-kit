@@ -1,8 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProjectSession, SystemData, MapData } from '@rmmz-kit/core';
-import { mapFileName } from '@rmmz-kit/core';
-import { decompile, printDsl } from '@rmmz-kit/compiler';
+import { NamespaceRegistry, mapFileName } from '@rmmz-kit/core';
+import { decompile, printDsl, type DslNameLookup } from '@rmmz-kit/compiler';
 import { ASSET_DIRS } from './assets.js';
 import { DATABASE_TABLES } from './tables.js';
 
@@ -36,6 +36,10 @@ export function projectSummary(session: ProjectSession): unknown {
     tables,
     namedSwitches: (system?.switches ?? []).filter(Boolean).length,
     namedVariables: (system?.variables ?? []).filter(Boolean).length,
+    // The names apply_script and page conditions accept in place of ids —
+    // listed for the same reason the asset catalog is: a model that can see
+    // what exists doesn't invent what doesn't.
+    namespaces: new NamespaceRegistry(session).list(),
   };
 }
 
@@ -52,6 +56,11 @@ export function mapResource(session: ProjectSession, mapId: number): unknown {
     throw new Error(`Map ${mapId} does not exist`);
   }
   const map = session.readFile<MapData>(file);
+  const registry = new NamespaceRegistry(session);
+  const names: DslNameLookup = {
+    switch: (id) => registry.nameOf('switches', id),
+    variable: (id) => registry.nameOf('variables', id),
+  };
   return {
     ...map,
     events: map.events.map((event) => {
@@ -60,7 +69,7 @@ export function mapResource(session: ProjectSession, mapId: number): unknown {
         ...event,
         pages: event.pages.map((page) => {
           try {
-            return { ...page, script: printDsl(decompile(page.list)) };
+            return { ...page, script: printDsl(decompile(page.list), names) };
           } catch {
             return page;
           }

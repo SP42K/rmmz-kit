@@ -3,6 +3,7 @@ import { statSync } from 'node:fs';
 import path from 'node:path';
 import { assertProjectRoot, listDataFiles } from './io/projectRoot.js';
 import { parseJson, stringifyCompact } from './io/format.js';
+import { NAMESPACES_FILE } from './namespaces.js';
 
 /**
  * Deployment export (plan §3 M11). Sits in core, not its own package: it is
@@ -108,6 +109,9 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
       // it is exactly what this exclusion exists to prevent.
       const lower = rel.toLowerCase();
       if (EXCLUDED.has(lower.split('/')[0]) || lower.endsWith('.rmmzsave')) return false;
+      // The allocator's namespace registry is dev metadata like the project
+      // marker: the game never fetches it, and it names every quest flag.
+      if (lower === `data/${NAMESPACES_FILE.toLowerCase()}`) return false;
       const stats = statSync(src);
       if (stats.isDirectory()) return true;
       if (keep && isPrunable(rel) && !keep.has(assetKey(rel))) {
