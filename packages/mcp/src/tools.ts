@@ -23,6 +23,7 @@ import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesi
 import {
   composeMap,
   createMap,
+  freeRects,
   paintTiles,
   resizeMap,
   setTileFlags,
@@ -361,6 +362,47 @@ export function setTileFlagsTool(session: ProjectSession, tilesetId: number, til
 
 export function composeMapTool(session: ProjectSession, spec: ComposeSpec): ComposeResult {
   return composeMap(session, spec);
+}
+
+/**
+ * The map-level fields that are neither tiles nor events — encounters, display
+ * name, BGM, parallax. They are a real category with no surface at all until
+ * now: `upsert_database` can't touch maps (MapInfos is the *tree*, not the map),
+ * and `create_map`/`compose_map` only write the defaults, so random encounters —
+ * a whole gameplay system — could only be set by going behind the tools.
+ *
+ * Shallow merge, like `update_system`, and for the same reason: a nested field
+ * (`bgm`, an `encounterList` row) is only meaningful as a set. The four fields
+ * that already have dedicated tools are refused rather than silently accepted,
+ * because writing `data` here would skip autotiling and writing `width` would
+ * leave the map's tile array the wrong length — a corrupt map, not an edit.
+ */
+const MAP_FIELDS_WITH_OWN_TOOL: Record<string, string> = {
+  data: 'paint_tiles',
+  events: 'upsert_map_event',
+  width: 'resize_map',
+  height: 'resize_map',
+};
+
+export function updateMap(session: ProjectSession, mapId: number, patch: Record<string, unknown>): { newFields: string[] } {
+  for (const key of Object.keys(patch)) {
+    const tool = MAP_FIELDS_WITH_OWN_TOOL[key];
+    if (tool) throw new Error(`Cannot set "${key}" here — use ${tool}, which keeps the rest of the map consistent with it.`);
+  }
+  let newFields: string[] = [];
+  session.updateFile<Record<string, unknown>>(mapFileName(mapId), (data) => {
+    newFields = Object.keys(patch).filter((key) => !Object.hasOwn(data, key));
+    return { ...data, ...patch };
+  });
+  return { newFields };
+}
+
+/** `find_free_rect` (gap review #9): where decoration can go without landing on an event or inside a wall. */
+export function findFreeRect(
+  session: ProjectSession,
+  spec: { mapId: number; width: number; height: number; limit?: number }
+): { rects: Array<{ x: number; y: number; width: number; height: number }> } {
+  return { rects: freeRects(session, spec.mapId, spec.width, spec.height, spec.limit) };
 }
 
 /**

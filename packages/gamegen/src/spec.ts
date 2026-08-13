@@ -40,12 +40,37 @@ const troop = z
       'ever arranges enemies the project already has — it never invents stats.'
   );
 
+/**
+ * The generator never invents art — this repo ships none — but the moment a
+ * project *has* some, an event with no `characterName` is a blank tile the
+ * player bumps into. So the caller names what it has, exactly like `troop`:
+ * arrange what exists, invent nothing. `rmmz://asset-catalog` is the list.
+ */
+const sprite = z
+  .object({
+    characterName: z.string().min(1).describe('A file in img/characters, without the .png — see rmmz://asset-catalog'),
+    characterIndex: z.number().int().min(0).max(7).optional().describe('Which of the 8 characters on that sheet (default 0)'),
+    direction: z.number().int().min(2).max(8).optional().describe('Facing: 2 down (default), 4 left, 6 right, 8 up'),
+  })
+  .strict();
+
 export const AreaSpecSchema = z
   .object({
     key,
     name: z.string().min(1).describe("The map's name in the editor's map tree"),
     width: z.number().int().min(15).max(120).optional().describe('Default 33'),
     height: z.number().int().min(15).max(120).optional().describe('Default 25'),
+    tilesetId: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'Tileset the map draws with (default 1). Pick one whose A3/A4 pages have building tiles — the generator draws ' +
+          'walls with A4 kind 0, and a tileset without them (MZ\'s stock tileset 1, Overworld) draws them as nothing. ' +
+          'See rmmz://tileset/{id}.'
+      ),
+    portalSprite: sprite.optional().describe('Sprite for the portal events generated in this area'),
     connects: z
       .array(key)
       .optional()
@@ -63,6 +88,7 @@ export const ObjectiveSchema = z
         kind: z.literal('fetch'),
         area: key,
         name: z.string().min(1).describe('Name of the event the player interacts with (a herb patch, a chest)'),
+        sprite: sprite.optional(),
         item: z
           .union([
             z.number().int().min(1).describe('An existing Items.json row id'),
@@ -78,6 +104,7 @@ export const ObjectiveSchema = z
         kind: z.literal('defeat'),
         area: key,
         name: z.string().min(1),
+        sprite: sprite.optional(),
         troop,
         text: z.string().optional().describe('Line shown before the fight'),
       })
@@ -87,6 +114,7 @@ export const ObjectiveSchema = z
         kind: z.literal('talk'),
         area: key,
         name: z.string().min(1),
+        sprite: sprite.optional(),
         text: z.string().optional().describe('What this NPC says'),
       })
       .strict(),
@@ -98,9 +126,12 @@ export const QuestSpecSchema = z
     key,
     title: z.string().min(1).describe('Shown in dialogue, and what the generated messages are keyed on'),
     giver: z
-      .object({ area: key, name: z.string().min(1) })
+      .object({ area: key, name: z.string().min(1), sprite: sprite.optional() })
       .strict()
-      .describe('The NPC that offers the quest and takes the turn-in'),
+      .describe(
+        'The NPC that offers the quest and takes the turn-in. Two quests naming the same area and name are one NPC ' +
+          'with both quests on it, offered in `requires` order — not two people with the same face.'
+      ),
     objective: ObjectiveSchema,
     reward: z
       .object({
@@ -134,6 +165,7 @@ export const FinaleSpecSchema = z
   .object({
     area: key,
     name: z.string().min(1).describe('The boss, or whatever the player confronts last'),
+    sprite: sprite.optional(),
     troop,
     requires: z.array(key).optional().describe('Quest keys that must be finished first (default: all of them)'),
     lines: z
@@ -158,6 +190,7 @@ export const GameSpecSchema = z
   })
   .strict();
 
+export type Sprite = z.infer<typeof sprite>;
 export type AreaSpec = z.infer<typeof AreaSpecSchema>;
 export type ObjectiveSpec = z.infer<typeof ObjectiveSchema>;
 export type QuestSpec = z.infer<typeof QuestSpecSchema>;

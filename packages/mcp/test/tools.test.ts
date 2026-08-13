@@ -195,6 +195,66 @@ describe('tools', () => {
     expect(newFields).toEqual(['terms', 'gametitle']);
   });
 
+  /**
+   * Gap review #8: random encounters are a whole gameplay system that no tool
+   * could reach — the demo went behind them with `session.updateFile`.
+   */
+  it('updateMap writes the map-level fields, and refuses the ones with their own tool', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    const { newFields } = tools.updateMap(session, 1, {
+      encounterList: [{ troopId: 1, weight: 10, regionSet: [] }],
+      encounterStep: 20,
+      displayName: 'Grey Fen',
+    });
+
+    const map = session.readFile<MapData & { encounterList: unknown[]; encounterStep: number }>('Map001.json');
+    expect(map.encounterList).toEqual([{ troopId: 1, weight: 10, regionSet: [] }]);
+    expect(map.encounterStep).toBe(20);
+    expect(map.width).toBe(17); // untouched fields survive the merge
+    expect(newFields).toEqual([]);
+
+    // Writing `data` here would skip autotiling and writing `width` would leave
+    // the tile array the wrong length: a corrupt map, not an edit.
+    expect(() => tools.updateMap(session, 1, { width: 20 })).toThrow(/resize_map/);
+    expect(() => tools.updateMap(session, 1, { data: [] })).toThrow(/paint_tiles/);
+  });
+
+  /** Gap review #9: the one piece a caller doing decoration by hand has no way to ask for. */
+  it('findFreeRect returns non-overlapping walkable rects with no event on them', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    const map = session.readFile<MapData>('Map001.json');
+
+    const { rects } = tools.findFreeRect(session, { mapId: 1, width: 3, height: 2, limit: 3 });
+    expect(rects).toHaveLength(3);
+
+    const taken = new Set<string>();
+    for (const rect of rects) {
+      expect(rect.x + rect.width).toBeLessThanOrEqual(map.width);
+      for (let y = rect.y; y < rect.y + rect.height; y++) {
+        for (let x = rect.x; x < rect.x + rect.width; x++) {
+          expect(taken.has(`${x},${y}`)).toBe(false);
+          taken.add(`${x},${y}`);
+        }
+      }
+    }
+    // The fixture's one event sits on (0,0)...
+    const event = map.events.find(Boolean)!;
+    expect(taken.has(`${event.x},${event.y}`)).toBe(false);
+
+    // ...and a tile nothing can walk on is not somewhere to build either.
+    session.updateFile<Array<{ flags: number[] } | null>>('Tilesets.json', (data) => {
+      // ★ on tile 0 so the empty upper layers abstain, then block the ground.
+      data[map.tilesetId]!.flags[0] = 0x10;
+      data[map.tilesetId]!.flags[map.data[0]] = 0xf;
+    });
+    expect(tools.findFreeRect(session, { mapId: 1, width: 3, height: 2 }).rects).toEqual([]);
+  });
+
   it('upsertDatabase refuses a MapInfos row with no map file, but renames an existing map', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

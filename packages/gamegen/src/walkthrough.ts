@@ -56,6 +56,8 @@ function walkthrough(build: GameBuild): Scenario {
   const steps: ScenarioStep[] = [];
   const ledger = new Ledger();
   const travel = travelPlanner(build);
+  /** Quests turned in so far, so the run knows which of a shared giver's other quests are unlocked. */
+  const completed = new Set<string>();
 
   // The game starts where System.json says it does. Asserted first because
   // every later `playerAt` is relative to it, and because a build that forgot
@@ -113,19 +115,38 @@ function walkthrough(build: GameBuild): Scenario {
     steps.push({ action: 'runEvent', map: quest.giver.mapId, event: quest.giver.eventId });
     steps.push(expect(turnInAssertion(quest, ledger)));
 
-    // The giver has to move on too: page 3, not "would you fetch me a herb?"
-    // forever. Asserted here rather than at the end of the run because the
-    // player is already standing there — no extra travel to prove it.
+    // The giver has to move on too: the "thanks, that's behind us" line, not
+    // "would you fetch me a herb?" forever. Asserted here rather than at the end
+    // of the run because the player is already standing there — no extra travel
+    // to prove it. The gold assertion is what catches a turn-in that pays twice.
+    //
+    // An NPC with another quest in them offers it in the same breath, so the
+    // choice has to be answered — and answered "not now", because accepting it
+    // here would start a quest this run has not travelled to yet. That the offer
+    // arrives at all is the assertion that the two quests really are one NPC.
+    // Only when that next quest is actually unlocked: otherwise the NPC says why
+    // it is locked, asks nothing, and a queued answer would be left in the queue
+    // for whichever event asks the next question.
+    completed.add(quest.key);
+    const next = build.quests.find(
+      (q) =>
+        q.giver.mapId === quest.giver.mapId &&
+        q.giver.eventId === quest.giver.eventId &&
+        q.giver.order === quest.giver.order + 1
+    );
+    const offersNext = next !== undefined && next.requires.every((key) => completed.has(key));
     steps.push({ action: 'clearMessages' });
+    if (offersNext) steps.push({ action: 'answerChoices', choices: [1] });
     steps.push({ action: 'runEvent', map: quest.giver.mapId, event: quest.giver.eventId });
     steps.push(
       expect({
         message: quest.lines.done,
         noMessage: quest.lines.offer,
-        activePage: { map: quest.giver.mapId, event: quest.giver.eventId, page: 3 },
         gold: { value: ledger.gold, cmp: 'eq' },
+        ...(offersNext ? { switch: { id: next!.switches.started, value: false } } : {}),
       })
     );
+    if (offersNext) steps.push(expect({ message: next!.lines.offer }));
   }
 
   steps.push(...travel.to(build.finale.area));
@@ -196,7 +217,10 @@ function gates(build: GameBuild): Scenario {
     steps.push({ action: 'runEvent', map: quest.giver.mapId, event: quest.giver.eventId });
     steps.push(
       expect({
-        message: quest.lines.locked,
+        // Only the NPC's *first* quest gets as far as saying why it is locked:
+        // an NPC with two quests talks about the earlier one until it is done,
+        // so for the rest the claim worth asserting is that it is not on offer.
+        ...(quest.giver.order === 0 ? { message: quest.lines.locked } : {}),
         noMessage: quest.lines.offer,
         switch: { id: quest.switches.started, value: false },
       })

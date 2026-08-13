@@ -43,6 +43,8 @@ describe('MCP server wiring', () => {
         'update_system',
         'create_map',
         'resize_map',
+        'update_map',
+        'find_free_rect',
         'paint_tiles',
         'set_tile_flags',
         'compose_map',
