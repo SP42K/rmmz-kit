@@ -6,22 +6,26 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Windows is the dev platform and the one that breaks first (same-dir
+      # atomic rename, path containment, shelling out to git), so a failure
+      # there must not hide the Linux result.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
       - run: npm ci
-      - run: npx tsc -p packages/core/tsconfig.json --noEmit
-      # vitest transpiles without typechecking, so every package needs its own
-      # tsc run here or its type errors reach main unnoticed.
-      - run: npx tsc -p packages/compiler/tsconfig.json --noEmit
-      - run: npx tsc -p packages/validate/tsconfig.json --noEmit
-      - run: npx tsc -p packages/battlesim/tsconfig.json --noEmit
-      - run: npx tsc -p packages/mapgen/tsconfig.json --noEmit
-      - run: npx tsc -p packages/playtest/tsconfig.json --noEmit
-      - run: npx tsc -p packages/agent/tsconfig.json --noEmit
-      - run: npx tsc -p packages/gamegen/tsconfig.json --noEmit
-      - run: npx tsc -p packages/mcp/tsconfig.json --noEmit
+      # vitest transpiles without typechecking, so the typecheck has to happen
+      # somewhere. `npm run build` is `tsc -p` per workspace: it typechecks
+      # every package's src — what the old step-per-package `--noEmit` block
+      # did, minus the standing requirement to remember to add one — and emits
+      # the dist/ the rmmz-mcp bin loads, which the tests never exercise
+      # because they resolve @rmmz-kit/* through the rmmz-kit-source condition.
+      - run: npm run build
       - run: npx vitest run

@@ -58,9 +58,11 @@ npx tsc -p packages/mcp/tsconfig.json --noEmit
 npm run build                                  # tsc per workspace
 ```
 
-No linter. CI (`.github/workflows/test.yml`) = one typecheck per package + vitest on Node 20.
-vitest strips types without checking them, so a new package must add its own `tsc` step there
-or its type errors reach `master` unnoticed.
+No linter. CI (`.github/workflows/test.yml`) = `npm run build` + vitest on Node 20, Linux and
+Windows. vitest strips types without checking them, so the typecheck rides on `npm run build`
+(`tsc -p` per workspace) — a new package needs a `build` script like every other one, or its
+type errors reach `master` unnoticed. Note `build` only covers each package's `src`: `test/`
+is outside every tsconfig's `include` and has never been typechecked.
 
 Tests require a working `git` binary on PATH: `packages/core/test/testProject.ts` (and each other
 package's own `test/testProject.ts`, deliberately duplicated rather than cross-imported) copies

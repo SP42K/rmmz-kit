@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import path from 'node:path';
-import { assertProjectRoot, listDataFiles } from './io/projectRoot.js';
+import { assertProjectRoot, listDataFiles, relativeUnderRoot } from './io/projectRoot.js';
 import { parseJson, stringifyCompact } from './io/format.js';
 import { NAMESPACES_FILE } from './namespaces.js';
 
@@ -199,9 +199,7 @@ async function readGameTitle(root: string): Promise<string> {
   return typeof system.gameTitle === 'string' ? system.gameTitle : '';
 }
 
-function relative(root: string, file: string): string {
-  return path.relative(root, file).split(path.sep).join('/');
-}
+const relative = relativeUnderRoot;
 
 function isPrunable(rel: string): boolean {
   return PRUNABLE_ROOTS.some((dir) => rel.startsWith(dir)) && !NEVER_PRUNE.some((dir) => rel.startsWith(dir));
