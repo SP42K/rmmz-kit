@@ -65,6 +65,26 @@ describe('IdAllocator', () => {
     expect(() => allocator.allocNamespace('q', { switches: ['a', 'a'] })).toThrow(/Duplicate/);
   });
 
+  it('refuses to re-allocate a member the namespace already owns, instead of orphaning the first id', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+
+    const session = await openProject(dir);
+    const allocator = new IdAllocator(session);
+    const first = allocator.allocNamespace('quest.herb', { switches: ['started'] });
+
+    // Without the guard this handed out a second id, left two System.json
+    // entries named quest.herb.started, and dropped the first from the registry
+    // — re-opening M6.5 gap #2 for an id live events already reference.
+    expect(() => allocator.allocNamespace('quest.herb', { switches: ['started'] })).toThrow(/already owns/);
+    expect(new NamespaceRegistry(session).nameOf('switches', first.switches.started)).toBe('quest.herb.started');
+
+    // A *different* member of the same namespace is still fine.
+    expect(allocator.allocNamespace('quest.herb', { switches: ['done'] }).switches.done).not.toBe(
+      first.switches.started
+    );
+  });
+
   it('occupancy survives System.json names being replaced whole (M6.5 gap #2)', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

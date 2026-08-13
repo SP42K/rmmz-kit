@@ -43,7 +43,14 @@ export class NamespaceRegistry {
       this.session.createFile(NAMESPACES_FILE, { namespaces: {} } satisfies NamespacesData);
     }
     this.session.updateFile<NamespacesData>(NAMESPACES_FILE, (data) => {
+      // `?? {}` throughout this class, not just here: the file is checked into
+      // the project's git and documented as human-readable dev metadata, so a
+      // hand-edit (or a merge) that drops one of the two field keys is a thing
+      // that happens — and it must not turn into an opaque
+      // "Cannot convert undefined or null to object" from the allocator.
+      data.namespaces ??= {};
       const ns = (data.namespaces[namespace] ??= { switches: {}, variables: {} });
+      ns[field] ??= {};
       Object.assign(ns[field], members);
     });
   }
@@ -52,11 +59,11 @@ export class NamespaceRegistry {
     if (ids.length === 0 || !this.session.listFiles().includes(NAMESPACES_FILE)) return;
     const drop = new Set(ids);
     this.session.updateFile<NamespacesData>(NAMESPACES_FILE, (data) => {
-      for (const [name, ns] of Object.entries(data.namespaces)) {
-        for (const [member, id] of Object.entries(ns[field])) {
+      for (const [name, ns] of Object.entries(data.namespaces ?? {})) {
+        for (const [member, id] of Object.entries(ns[field] ?? {})) {
           if (drop.has(id)) delete ns[field][member];
         }
-        if (Object.keys(ns.switches).length === 0 && Object.keys(ns.variables).length === 0) {
+        if (Object.keys(ns.switches ?? {}).length === 0 && Object.keys(ns.variables ?? {}).length === 0) {
           delete data.namespaces[name];
         }
       }
@@ -67,7 +74,7 @@ export class NamespaceRegistry {
   allocatedIds(field: NamespaceField): Set<number> {
     const ids = new Set<number>();
     for (const ns of Object.values(this.data()?.namespaces ?? {})) {
-      for (const id of Object.values(ns[field])) ids.add(id);
+      for (const id of Object.values(ns[field] ?? {})) ids.add(id);
     }
     return ids;
   }
@@ -89,7 +96,7 @@ export class NamespaceRegistry {
   /** Inverse of resolve, for printing an existing event back as readable DSL. */
   nameOf(field: NamespaceField, id: number): string | undefined {
     for (const [namespace, ns] of Object.entries(this.data()?.namespaces ?? {})) {
-      for (const [member, memberId] of Object.entries(ns[field])) {
+      for (const [member, memberId] of Object.entries(ns[field] ?? {})) {
         if (memberId === id) return `${namespace}.${member}`;
       }
     }
@@ -99,7 +106,7 @@ export class NamespaceRegistry {
   names(field: NamespaceField): string[] {
     const out: string[] = [];
     for (const [namespace, ns] of Object.entries(this.data()?.namespaces ?? {})) {
-      for (const member of Object.keys(ns[field])) out.push(`${namespace}.${member}`);
+      for (const member of Object.keys(ns[field] ?? {})) out.push(`${namespace}.${member}`);
     }
     return out.sort();
   }

@@ -689,6 +689,11 @@ Plan §8's top-ranked gap, one feature in three halves:
 - `allocate_namespace` takes member *names* (`switches: ["started", "done"]`)
   as well as counts (members "0".."n-1") and returns member→id. Members may
   not contain `.`, so `namespace.member` splits unambiguously at the last dot.
+  Re-allocating a member the namespace already owns is refused (naming the
+  existing ids) rather than served: the registry keeps one id per member, so a
+  second allocation would leave the first named in System.json but unregistered
+  — free again the moment `update_system` replaces the names array, which is
+  gap #2 reopened on an id live events already reference.
 - Resolution happens at the edges, never in the middle: `parseDsl` takes a
   `DslNameResolver`, `printDsl` the inverse `DslNameLookup` (so
   `rmmz://map/{id}`'s decompiled scripts read `quest.herb.started`, not `11`),

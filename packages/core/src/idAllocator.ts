@@ -87,6 +87,19 @@ export class IdAllocator {
     if (new Set(members).size !== members.length) {
       throw new Error(`Duplicate member names in ${JSON.stringify(members)}`);
     }
+    // Re-allocating a member the namespace already has would overwrite its
+    // registry entry (record() Object.assigns), leaving the *first* id named in
+    // System.json but unregistered — i.e. free again the moment update_system
+    // replaces the names array, which is exactly the M6.5 gap #2 this registry
+    // exists to close. Refuse, and name the ids the caller should reuse.
+    const existing = this.registry.list()[namespace]?.[field] ?? {};
+    const taken = members.filter((member) => member in existing);
+    if (taken.length > 0) {
+      throw new Error(
+        `Namespace ${JSON.stringify(namespace)} already owns ${field} ${taken.map((m) => `${m}=${existing[m]}`).join(', ')}. ` +
+          `Re-allocating would orphan those ids — use them as they are, or release them first.`
+      );
+    }
 
     const occupied = this.registry.allocatedIds(field);
     const allocated: Record<string, number> = {};
