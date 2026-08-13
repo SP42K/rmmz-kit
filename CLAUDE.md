@@ -42,7 +42,13 @@ closing M6.5 gap #2 — see below). The nine gaps from the first end-to-end run
 against a **real licensed MZ install** are closed (a boot crash, unreadable and
 walk-through-able maps, no way to name a tile id, invisible NPCs, duplicated
 givers, numbered namespace members, no map-level tool, no placement query) —
-each one is written up where it landed, below. L2 Tier 3 not started.
+each one is written up where it landed, below. L2 Tier 3: the picture subset
+(231/232/233/235) is delivered as `SIMPLE_COMMANDS` entries — the first
+need-driven slice of §8.1-3, since pictures are how a game shows character
+busts; 234 (nested tone array), 261, vehicles, 281–285 and 331–333 still ride
+`RawNode`. `import_asset` additionally accepts `js/plugins` (`.js`), so a
+third-party plugin can be imported and enabled by `manage_plugins` in one
+session instead of dead-ending at "copy the file in by hand".
 
 ## Commands
 

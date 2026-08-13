@@ -18,8 +18,8 @@ function mulberry32(seed: number) {
   };
 }
 
-/** Codes with no typed node: Tier 3 (231/232/235/261/281/331/332) and MV's text plugin command (356). */
-const RAW_CODES = [124, 132, 133, 231, 232, 235, 261, 281, 331, 332, 356];
+/** Codes with no typed node: the Tier 3 remainder (234/261/281/331/332 — 231/232/233/235 are SIMPLE_COMMANDS entries now) and MV's text plugin command (356). */
+const RAW_CODES = [124, 132, 133, 234, 261, 281, 331, 332, 356];
 
 const SIMPLE_KINDS_UNDER_TEST = Object.keys(SIMPLE_COMMANDS) as SimpleKind[];
 
