@@ -24,6 +24,15 @@ describe('relativeUnderRoot', () => {
     expect(relativeUnderRoot(root, path.join(root, 'Game.rmmzproject'))).toBe('Game.rmmzproject');
   });
 
+  // What `fs.cp` actually hands its filter on Windows, and the reason the seven
+  // deploy/createProject failures survived a first fix aimed only at 8.3 names:
+  // the answer is *absolute*, not a `..` walk, so an escape check misses it.
+  it.runIf(process.platform === 'win32')('resolves the extended-length \\\\?\\ form fs.cp hands out', () => {
+    const root = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\project';
+    expect(relativeUnderRoot(root, `\\\\?\\${root}\\data\\System.json`)).toBe('data/System.json');
+    expect(relativeUnderRoot(root, `\\\\?\\${root}\\Game.rmmzproject`)).toBe('Game.rmmzproject');
+  });
+
   it('resolves a root and a file that spell the same directory differently', async () => {
     const base = await mkdtemp(path.join(tmpdir(), 'rmmz-relative-'));
     const real = path.join(base, 'real');
