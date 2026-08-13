@@ -38,7 +38,11 @@ see below). M11 done (`deploy` + `create_project` in `packages/core`, plus the
 `templates/blank-project` tree — both halves of the editor-parity table's last
 two rows, minus what needs the paid editor's runtime, see below). §8.1-1 done
 (namespace registry + `quest.herb.started` name sugar across core/compiler/mcp,
-closing M6.5 gap #2 — see below). L2 Tier 3 not started.
+closing M6.5 gap #2 — see below). The nine gaps from the first end-to-end run
+against a **real licensed MZ install** are closed (a boot crash, unreadable and
+walk-through-able maps, no way to name a tile id, invisible NPCs, duplicated
+givers, numbered namespace members, no map-level tool, no placement query) —
+each one is written up where it landed, below. L2 Tier 3 not started.
 
 ## Commands
 
@@ -204,6 +208,17 @@ callers filter by `severity`/`rule` themselves:
   (case-sensitive, with a separate warning for a case-only mismatch) under `img/`, `audio/se/`.
   Switches/variables aren't a bounded table in MZ (any numeric id "works"), so a referenced-but-
   unnamed switch/variable is a warning, not the error a truly dangling database id gets.
+- `rules/runtime.ts` — the two ways a project that passes every other rule still fails in front of
+  a player, both found by running this toolchain against a licensed install for the first time. A
+  System.json field the engine dereferences with no fallback (`advanced.windowOpacity` is
+  `Window_Base.updateBackOpacity`'s first read, so a missing one is a black screen before the first
+  map draws; the editor writes these on first *save*, which is why its own `NewData` lacks them) —
+  a short list of *named crashes*, not a completeness check, since core's `SystemData` is
+  deliberately a subset of what MZ writes. And a map on which nothing blocks movement, which is
+  where a map re-pointed at a stock tileset ends up: `analyzeReachability` is structurally blind to
+  it, because an all-passable map is still exactly one walkable region. That one is a *warning* —
+  an open field with no walls is legal MZ, and a rule that cried wolf on those would be ignored
+  wholesale, the same reasoning that kept "every event is reachable" out of this package.
 - `rules/semantics.ts` — dead event pages (MZ matches pages last-to-first; a page is dead if a
   *later* page's condition set is a subset of its own), a self switch written but read by no page
   of the same event (**not** "never turned back off" — the one-way latch is the treasure-chest
@@ -239,10 +254,12 @@ stdio entry point for a client like Claude Desktop: `npm run build`, then
 package's `exports` map defaults to `dist/` while the `rmmz-kit-source` custom condition (issue #7,
 resolved) keeps dev tooling on the TS sources — see Conventions.
 
-Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 5 read resources
-(`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://asset-catalog`,
-`rmmz://game-brief-guide`) plus 23 tools (`apply_script`, `upsert_map_event`, `upsert_database`,
-`update_system`, `create_map`, `resize_map`, `paint_tiles`, `set_tile_flags`, `compose_map`,
+Grain follows plan §4.5 (12–18 tools, not the 28–35 a reference repo used): 6 read resources
+(`rmmz://project/summary`, `rmmz://map/{id}`, `rmmz://database/{table}`, `rmmz://tileset/{id}`,
+`rmmz://asset-catalog`, `rmmz://game-brief-guide`) plus 25 tools (`apply_script`,
+`upsert_map_event`, `upsert_database`,
+`update_system`, `create_map`, `resize_map`, `update_map`, `paint_tiles`, `set_tile_flags`,
+`compose_map`, `find_free_rect`,
 `manage_plugins`, `import_asset`, `allocate_namespace`, `validate`, `simulate_battle`, `playtest`,
 `run_scenario`, `repair`, `generate_game`, `deploy`, `create_project`, `diff`, `commit`,
 `rollback`). §4.5's `coverage()` is
@@ -290,6 +307,18 @@ a filename) and rejects an extension MZ won't load — `ImageManager` appends `.
 a sprite that silently never appears. Not implemented: reordering the plugin list (load order is
 append order) and removing entries — `status: false` is what "停用" means, and neither has had a
 caller.
+
+`update_map` and `rmmz://tileset/{id}` are the two surfaces the first real-project run found
+missing. A map's own fields — `encounterList`/`encounterStep`, `displayName`, `bgm`, parallax — are
+neither tiles nor events nor a MapInfos row, so nothing could write them and random encounters, a
+whole gameplay system, had no surface at all; `update_map` shallow-merges them and refuses the four
+fields that have their own tool (writing `data` would skip autotiling, writing `width` would leave
+the tile array the wrong length). The tileset resource is the asset-catalog argument applied to tile
+ids: producing one by hand means knowing A2 kinds start at 2816, that a kind is `base + rel*48` and
+that `rel = row*8 + col` on a PNG the caller cannot see — so it lists every autotile kind's base id,
+sheet, family and current flags, and each plain page's id range. Names are not listed, because the
+art carries none and inventing them would be worse than silence. `find_free_rect` fronts mapgen's
+`freeRects`.
 
 Plus `update_system` for the one database file that isn't
 a table: System.json is a single object, shallow-merged (nested fields like `terms` replaced whole).
@@ -415,10 +444,18 @@ array `Game_Map.checkPassage` indexes, instead of crashing the game on the playe
 The list is deliberately near-empty — per-table schemas are the upfront modeling §4.5 says not to
 build, so an entry has to earn its place by naming a crash.
 
+`freeRects` sits next to `analyzeReachability` in `passage.ts` and is the whole of what this
+package does for decoration: "give me N non-overlapping w×h rects where every tile is walkable and
+no event stands". Prefabs still don't belong here (the reasoning above holds), but a caller laying
+out a village by hand has to ask that question somehow, and the two things they would otherwise
+guess at — an event's tile, a wall — are exactly the ones that seal a room off. It answers "the
+space was free", not "filling it in is safe"; `analyzeReachability` is still what proves the second.
+
 Deliberately out of scope: an "every event is reachable" *validator* rule. `analyzeReachability`
 exports the machinery and `compose_map` uses it, but running it over hand-made maps warns on
 things that are fine (parallel-process events parked at 0,0, decoration events on impassable
-tiles), and a validator that cries wolf gets ignored wholesale.
+tiles), and a validator that cries wolf gets ignored wholesale. (What *is* a rule, since it needs
+no such judgement: a map where nothing at all blocks movement — see `validate`'s `rules/runtime.ts`.)
 
 ### L5 playtest and headless testing (`packages/playtest`)
 
@@ -567,8 +604,8 @@ Four files, in the order a call moves through them:
   the order the walkthrough plays.
 - `build.ts` — spec → project, deterministically: one `composeMap` per area (M7 gives connectivity
   by construction, so nothing here re-checks the inside of a map), a two-way portal pair per
-  `connects` edge, a three-page giver + two-page objective per quest, and a gated finale. Two
-  details worth knowing. **Placement is an allocator, not a formula** (`Placer`): two events on one
+  `connects` edge, one giver event per NPC + a two-page objective per quest, and a gated finale.
+  Three details worth knowing. **Placement is an allocator, not a formula** (`Placer`): two events on one
   tile is legal MZ and always a bug, so tiles are handed out room-by-room, middle-first, and each
   one reserves its four neighbours. That last part is not tidiness — a generated event is
   `priorityType: 1`, so middle-first on its own packs them into a solid blob whose inner tiles no
@@ -576,7 +613,14 @@ Four files, in the order a call moves through them:
   boxed the player in on frame one. Nothing downstream catches it: the walkthrough drives events
   with `runEvent` and never walks. **The unconditional page must be
   page 1**: MZ matches pages last-to-first, so an unconditional page anywhere else kills every page
-  above it, which `validate`'s `semantics/dead-event-page` reports as an error.
+  above it, which `validate`'s `semantics/dead-event-page` reports as an error. **A giver is one
+  event with one page, and its quest state machine is branches, not pages.** Three pages per quest
+  is the natural MZ idiom for *one* quest and has no answer for two: two quests keyed to the same
+  `(area, name)` are one person, and their page sets concatenated either shadow each other (which
+  the dead-page rule correctly calls an error) or need a gate invented between them. The branch
+  chain — `if quest 1 done → acknowledge and fall through, else → offer/remind/take it and stop`,
+  in `questOrder` — says the same thing without either problem, and an NPC who offers their next
+  quest in the same breath is why the walkthrough answers "not now" after a turn-in.
 - `walkthrough.ts` — the build's own regression suite, derived from the *spec* and not from the
   events that were emitted. That is the whole point: a walkthrough read back out of the generated
   data would agree with it by construction and prove nothing. Two scenarios, because "finishable"
@@ -593,10 +637,12 @@ Four files, in the order a call moves through them:
   reason M9's loop takes one. Nothing is committed: every write went through `ProjectSession`, so
   a caller who doesn't like the report rolls back and the project never saw it.
 
-Deliberately not done: decoration and sprites (generated events are invisible — this repo ships no
-art to point at, the same reason M7 has no prefabs), and any notion of *pacing* or *story*. The
-generator arranges content; it never invents an enemy, because designing one is a balance question
-`simulate_battle` answers.
+Deliberately not done: decoration, and any notion of *pacing* or *story*. The generator arranges
+content; it never invents an enemy, because designing one is a balance question `simulate_battle`
+answers — and by the same rule it never invents *art*: `sprite`/`portalSprite`/`tilesetId` name what
+the project already has (`rmmz://asset-catalog`, `rmmz://tileset/{id}`), and an area with no
+`tilesetId` keeps `blankMap`'s tileset 1, which in a stock project is Overworld and draws the walls
+this generator paints as nothing.
 
 **Acceptance, honestly split** — the same shape as M6, M8 and M9. The plan asks for「連續 10 次生成，
 ≥ 6 次可完整通關且不卡關」. `test/generate.test.ts` runs ten different games back to back — the area

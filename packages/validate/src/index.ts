@@ -3,6 +3,7 @@ import type { Finding } from './types.js';
 import { checkStructure } from './rules/structure.js';
 import { checkReferences } from './rules/references.js';
 import { checkSemantics } from './rules/semantics.js';
+import { checkRuntime } from './rules/runtime.js';
 
 export type { Finding, Severity } from './types.js';
 
@@ -13,5 +14,10 @@ export type { Finding, Severity } from './types.js';
  * a human runs against an arbitrary project.
  */
 export async function validateProject(session: ProjectSession): Promise<Finding[]> {
-  return [...checkStructure(session), ...(await checkReferences(session)), ...checkSemantics(session)];
+  return [
+    ...checkStructure(session),
+    ...(await checkReferences(session)),
+    ...checkSemantics(session),
+    ...checkRuntime(session),
+  ];
 }

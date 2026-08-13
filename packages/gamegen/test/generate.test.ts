@@ -2,7 +2,6 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openProject, mapFileName, type MapData, type ProjectSession } from '@rmmz-kit/core';
-import { compile } from '@rmmz-kit/compiler';
 import { runScenario } from '@rmmz-kit/playtest';
 import { generateGame } from '../src/generate.js';
 import { buildGame } from '../src/build.js';
@@ -155,7 +154,11 @@ describe('generateGame', () => {
     // suite that proves nothing.
     const quest = report.build!.quests[0];
     session.updateFile<MapData>(mapFileName(quest.giver.mapId), (map) => {
-      map.events[quest.giver.eventId]!.pages[1].list = compile([]);
+      const page = map.events[quest.giver.eventId]!.pages[0];
+      // Just the one command, left otherwise untouched: the giver still takes
+      // the item and still thanks you, which is what makes this bug survive a
+      // human playtest of the quest it belongs to.
+      page.list = page.list.filter((c) => !(c.code === 121 && c.parameters[0] === quest.switches.done));
     });
 
     const after = runScenario(session, report.suite[0]);
@@ -217,6 +220,66 @@ describe('generateGame', () => {
       ].filter(([dx, dy]) => !taken.has(`${x + dx},${y + dy}`));
       expect({ key, free: free.length }).toEqual({ key, free: 4 });
     }
+  });
+
+  /**
+   * Gap review #5/#6/#7: two quests from "Militia Captain" are one NPC, that
+   * NPC has a face, and the switches read `quest.scout.started` rather than
+   * `quest.scout.0`. All three are invisible to the walkthrough — it drives
+   * events by id and never looks at the map — so they are asserted here.
+   */
+  it('gives one NPC both of their quests, with the sprite and the switch names the spec asked for', async () => {
+    const session = await open();
+    const build = buildGame(session, {
+      ...BANDITS,
+      quests: BANDITS.quests.map((quest) => ({
+        ...quest,
+        giver: { ...quest.giver, sprite: { characterName: 'People1', characterIndex: 3 } },
+      })),
+    });
+
+    const [scout, wolves] = build.quests.filter((q) => q.giver.name === 'Militia Captain');
+    expect(scout.giver.eventId).toBe(wolves.giver.eventId);
+    expect([scout.giver.order, wolves.giver.order]).toEqual([0, 1]);
+    expect(build.quests.filter((q) => q.giver.name === 'Herbalist')[0].giver.eventId).not.toBe(scout.giver.eventId);
+
+    const map = session.readFile<MapData>(mapFileName(scout.giver.mapId));
+    const captain = map.events[scout.giver.eventId]!;
+    expect(map.events.filter((e) => e?.name === 'Militia Captain')).toHaveLength(1);
+    expect(captain.pages[0].image).toMatchObject({ characterName: 'People1', characterIndex: 3 });
+
+    const names = session.readFile<{ switches: string[] }>('System.json').switches;
+    expect(names[scout.switches.started]).toBe('quest.scout.started');
+    expect(names[scout.switches.done]).toBe('quest.scout.done');
+    expect(names[build.clearSwitch]).toBe('game.clear');
+  });
+
+  /**
+   * Gap review #2/#3: the generator used to leave every map on tileset 1, and a
+   * map re-pointed at another tileset afterwards reads *that* one's flags — in a
+   * stock project A4 kind 0 is cliff tops, which are passable, so every wall the
+   * generator drew becomes a wall you walk through. Passing the tileset through
+   * is what makes composeMap write the flags into the tileset the map uses.
+   */
+  it('draws each area with the tileset the spec named, and makes its walls solid there', async () => {
+    const session = await open();
+    session.updateFile<Array<Record<string, unknown> | null>>('Tilesets.json', (data) => {
+      data[2] = { ...(data[1] as Record<string, unknown>), id: 2, name: 'Cave', flags: new Array(8192).fill(0) };
+    });
+
+    const build = buildGame(session, {
+      ...BANDITS,
+      areas: BANDITS.areas.map((area) => ({ ...area, tilesetId: 2 })),
+    });
+
+    for (const area of build.areas) {
+      expect(session.readFile<MapData>(mapFileName(area.mapId)).tilesetId).toBe(2);
+    }
+    const tilesets = session.readFile<Array<{ flags: number[] } | null>>('Tilesets.json');
+    // A4 kind 0 shape 0 = the wall composeMap fills with: all four direction
+    // bits set (0xf) means blocked, and it has to be blocked in tileset 2.
+    expect(tilesets[2]!.flags[5888] & 0xf).toBe(0xf);
+    expect(tilesets[1]!.flags[5888] & 0xf).toBe(0);
   });
 
   it('is reproducible: the same spec and seed build byte-identical maps', async () => {

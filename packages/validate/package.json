@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@rmmz-kit/core": "*",
-    "@rmmz-kit/compiler": "*"
+    "@rmmz-kit/compiler": "*",
+    "@rmmz-kit/mapgen": "*"
   }
 }

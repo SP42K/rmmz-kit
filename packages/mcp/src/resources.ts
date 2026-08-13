@@ -1,8 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import type { ProjectSession, SystemData, MapData } from '@rmmz-kit/core';
+import type { ProjectSession, SystemData, MapData, Tileset } from '@rmmz-kit/core';
 import { NamespaceRegistry, mapFileName } from '@rmmz-kit/core';
 import { decompile, printDsl, type DslNameLookup } from '@rmmz-kit/compiler';
+import { TILE_ID_A1, TILE_ID_A2, TILE_ID_A3, TILE_ID_A4, autotileFamily } from '@rmmz-kit/mapgen';
 import { ASSET_DIRS } from './assets.js';
 import { DATABASE_TABLES } from './tables.js';
 
@@ -79,6 +80,99 @@ export function mapResource(session: ProjectSession, mapId: number): unknown {
   };
 }
 
+/**
+ * `rmmz://tileset/{id}` — which tile ids this tileset can actually draw, and
+ * what they are.
+ *
+ * The asset-catalog argument (§4.5), applied to the one thing `paint_tiles` and
+ * `set_tile_flags` take that nobody can produce from a text interface: a tile
+ * id. Deriving one means knowing that A2 autotile kinds start at 2816, that a
+ * kind is `base + rel * 48`, and that `rel = row * 8 + col` on a PNG the caller
+ * cannot see — which in practice means opening the sheet in an image editor and
+ * counting tiles. Ids, sheets and flags are mechanical, so they are listed here;
+ * *names* ("this is the roof one") are not, because the art carries no labels
+ * and inventing them would be worse than saying nothing.
+ *
+ * The A1-A4 pages are 8 columns of autotile kinds; A5 and B-E are plain 8- and
+ * 16-column tile grids. `passable` is per-kind shape 0 / per-tile — the flags a
+ * tile *currently* has, which is how a caller tells a floor from a wall without
+ * looking at the picture.
+ */
+const AUTOTILE_PAGES = [
+  { slot: 'A1', base: TILE_ID_A1, kinds: 16, note: 'water and waterfalls; odd upper kinds are waterfalls' },
+  { slot: 'A2', base: TILE_ID_A2, kinds: 16, note: 'ground: grass, soil, floors' },
+  { slot: 'A3', base: TILE_ID_A3, kinds: 16, note: 'building walls and roofs (drawn as wall autotiles)' },
+  { slot: 'A4', base: TILE_ID_A4, kinds: 32, note: 'wall tops (first 8 of each 16) and wall sides' },
+] as const;
+
+const PLAIN_PAGES = [
+  { slot: 'A5', base: 1536, tiles: 512, columns: 8, note: 'plain ground tiles, no autotiling' },
+  { slot: 'B', base: 0, tiles: 256, columns: 16, note: 'objects drawn on the upper layers' },
+  { slot: 'C', base: 256, tiles: 256, columns: 16, note: 'objects drawn on the upper layers' },
+  { slot: 'D', base: 512, tiles: 256, columns: 16, note: 'objects drawn on the upper layers' },
+  { slot: 'E', base: 768, tiles: 256, columns: 16, note: 'objects drawn on the upper layers' },
+] as const;
+
+export function tilesetResource(session: ProjectSession, tilesetId: number): unknown {
+  if (!session.listFiles().includes('Tilesets.json')) throw new Error('This project has no Tilesets.json');
+  const tileset = session.readFile<Array<Tileset | null>>('Tilesets.json')[tilesetId];
+  if (!tileset) throw new Error(`Tileset ${tilesetId} does not exist`);
+  const flags = tileset.flags ?? [];
+
+  const describe = (tileId: number) => {
+    const flag = flags[tileId] ?? 0;
+    return {
+      tileId,
+      // Direction bits are *blocked* flags, so 0 is passable — reported the way
+      // set_tile_flags takes them, not the way the file stores them.
+      passable: { down: (flag & 0x01) === 0, left: (flag & 0x02) === 0, right: (flag & 0x04) === 0, up: (flag & 0x08) === 0 },
+      ...(flag & 0x10 ? { star: true } : {}),
+      ...(flag >> 12 ? { terrainTag: flag >> 12 } : {}),
+    };
+  };
+
+  return {
+    id: tileset.id,
+    name: tileset.name,
+    mode: tileset.mode,
+    // Empty means the tileset does not use that page at all: every id in its
+    // range draws nothing, which is what a wall painted with a tileset that has
+    // no A4 sheet looks like in the editor.
+    sheets: tileset.tilesetNames ?? [],
+    howToUseIds:
+      'paint_tiles takes an autotile kind\'s `tileId` (the base, shape 0) and derives the shape; a plain tile is its id as listed. ' +
+      'set_tile_flags takes any of these ids. A kind occupies 48 consecutive ids (base..base+47), one per border shape.',
+    autotiles: AUTOTILE_PAGES.filter((page) => (tileset.tilesetNames ?? [])[sheetIndex(page.slot)]).flatMap((page) =>
+      Array.from({ length: page.kinds }, (_, rel) => ({
+        sheet: page.slot,
+        file: (tileset.tilesetNames ?? [])[sheetIndex(page.slot)],
+        row: Math.floor(rel / 8),
+        col: rel % 8,
+        family: autotileFamily(page.base + rel * 48),
+        note: page.note,
+        ...describe(page.base + rel * 48),
+      }))
+    ),
+    plainTiles: PLAIN_PAGES.filter((page) => (tileset.tilesetNames ?? [])[sheetIndex(page.slot)]).map((page) => ({
+      sheet: page.slot,
+      file: (tileset.tilesetNames ?? [])[sheetIndex(page.slot)],
+      tileIdRange: [page.base, page.base + page.tiles - 1],
+      columns: page.columns,
+      note: `${page.note} — tileId = ${page.base} + row * ${page.columns} + col`,
+      // Only the tiles that are not plain-passable-and-unflagged: on a real
+      // sheet that is a handful out of 256, and the rest carry no information.
+      flagged: Array.from({ length: page.tiles }, (_, i) => page.base + i)
+        .filter((tileId) => (flags[tileId] ?? 0) !== 0)
+        .map(describe),
+    })),
+  };
+}
+
+/** MZ stores the nine sheet filenames in one array, in this order. */
+function sheetIndex(slot: string): number {
+  return ['A1', 'A2', 'A3', 'A4', 'A5', 'B', 'C', 'D', 'E'].indexOf(slot);
+}
+
 export function databaseResource(session: ProjectSession, table: string): unknown {
   const file = DATABASE_TABLES[table];
   if (!file) {
@@ -151,12 +245,26 @@ ${list('Enemies.json', 'Enemies (for `troop.enemyId`)')}
 ${list('Troops.json', 'Troops (for a numeric `troop`)')}
 ${list('Items.json', 'Items (for `reward.itemId` and a numeric fetch `item`)')}
 
+## Art the generator will use if you name it
+
+It never invents any — but an unnamed event is a blank tile the player bumps
+into, so on a project that has art, name it:
+
+- \`sprite: { characterName, characterIndex }\` on a quest's \`giver\`, on its
+  \`objective\`, on the \`finale\`, and \`portalSprite\` on an area. Filenames come
+  from \`rmmz://asset-catalog\`.
+- \`tilesetId\` on an area. The default is tileset 1, which in a stock project is
+  *Overworld* — it has no building tiles, so the walls this generator draws come
+  out as nothing. Pick one whose A3/A4 pages exist: \`rmmz://tileset/{id}\`.
+
+Two quests naming the same \`giver.area\` and \`giver.name\` are **one** NPC who
+offers both, in \`requires\` order — not two people with the same name.
+
 ## What it does not do
 
-Decoration, art and music: every generated event is invisible (no character
-sprite) because this repo ships no tileset or character art to point at. Give an
-event a sprite with \`upsert_map_event\` afterwards, or import one with
-\`import_asset\` first. Balance beyond "is the fight winnable" is
+Decoration and music. Lay out a village by hand with \`find_free_rect\` +
+\`paint_tiles\` (tile ids come from \`rmmz://tileset/{id}\`), set map music and
+random encounters with \`update_map\`. Balance beyond "is the fight winnable" is
 \`simulate_battle\`'s question, not this one's.
 `;
 }

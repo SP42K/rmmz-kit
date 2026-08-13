@@ -105,6 +105,8 @@ quest?" about an edit it has not committed.
 | `paint_tiles` | Fill rectangles of one layer with a tile id, then re-derive autotile shapes over what changed. |
 | `set_tile_flags` | Passability, terrain tags and tile options (star/ladder/bush/counter/damage) for individual tile ids. |
 | `compose_map` | Generate a connected room-and-corridor map (BSP) and create it. Returns the room rectangles to place events in — don't paint tile by tile. |
+| `update_map` | Shallow-merge a map's own fields: random encounters, display name, BGM/BGS, parallax. Tiles, events and size have their own tools and are refused here. |
+| `find_free_rect` | Non-overlapping rectangles where every tile is walkable and no event stands — where a house or a field can go. |
 
 ### Project files
 
@@ -149,6 +151,7 @@ files. Commit before either, or you will play the last commit and wonder why.
 | `rmmz://project/summary` | Title, map list, database row counts, namespaces, named switch/variable counts. |
 | `rmmz://map/{id}` | A map's full JSON, each event page annotated with its decompiled DSL script. |
 | `rmmz://database/{table}` | One table: `actors`, `classes`, `skills`, `items`, `weapons`, `armors`, `enemies`, `states`, `troops`, `commonEvents`, `tilesets`, `animations`, `mapInfos`. |
+| `rmmz://tileset/{id}` | Every tile id one tileset can draw: each autotile kind's base id, sheet, family and passability, plus each plain page's id range. Read it before `paint_tiles` — a tile id cannot be guessed from a filename. |
 | `rmmz://asset-catalog` | Filenames actually present under `img/` and `audio/` — ground tool calls in what exists instead of guessing. |
 | `rmmz://game-brief-guide` | How to turn a one-sentence brief into a `generate_game` spec, and what to do with each way its report comes back. Read before calling `generate_game`. |
 

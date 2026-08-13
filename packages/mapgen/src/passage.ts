@@ -114,6 +114,68 @@ export function checkPassage(map: MapData, flags: number[], x: number, y: number
   return false;
 }
 
+/**
+ * Rectangles of `width` x `height` on this map where every tile is walkable and
+ * no event stands — "where can I put a house / a market stall / a crop field
+ * without sealing anything off or landing on an NPC".
+ *
+ * Decoration itself stays out of this package (the reasoning against shipping
+ * prefabs drawn for a tileset this repo doesn't have still holds), but a caller
+ * doing it by hand has no way to ask this question, and the two things it would
+ * otherwise guess at — an event's tile, a wall — are exactly the ones that turn
+ * a decoration pass into an unreachable room. Run `analyzeReachability`
+ * afterwards: this says the rect was free, not that filling it in is safe.
+ */
+export function freeRects(
+  session: ProjectSession,
+  mapId: number,
+  width: number,
+  height: number,
+  limit = 8
+): Array<{ x: number; y: number; width: number; height: number }> {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
+    throw new Error(`Rect size must be positive integers, got ${JSON.stringify({ width, height })}`);
+  }
+  const map = session.readFile<MapData>(mapFileName(mapId));
+  const tilesets = session.readFile<Array<Tileset | null>>('Tilesets.json');
+  const flags = tilesets[map.tilesetId]?.flags ?? [];
+
+  const blocked = new Uint8Array(map.width * map.height);
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      // "Walkable" as the whole tile, not per direction: a tile you can only
+      // leave downwards is a cliff edge, not a place to build.
+      const walkable = (['down', 'up', 'left', 'right'] as Direction[]).every((d) => checkPassage(map, flags, x, y, d));
+      if (!walkable) blocked[y * map.width + x] = 1;
+    }
+  }
+  for (const event of map.events) {
+    if (event && event.x < map.width && event.y < map.height) blocked[event.y * map.width + event.x] = 1;
+  }
+
+  const found: Array<{ x: number; y: number; width: number; height: number }> = [];
+  const taken = new Uint8Array(blocked.length);
+  for (let y = 0; y + height <= map.height && found.length < limit; y++) {
+    for (let x = 0; x + width <= map.width && found.length < limit; x++) {
+      let free = true;
+      for (let dy = 0; dy < height && free; dy++) {
+        for (let dx = 0; dx < width && free; dx++) {
+          const i = (y + dy) * map.width + x + dx;
+          free = blocked[i] === 0 && taken[i] === 0;
+        }
+      }
+      if (!free) continue;
+      // Returned rects never overlap: a caller asking for four 3x3 plots wants
+      // four places, not the same place shifted by one tile.
+      for (let dy = 0; dy < height; dy++) {
+        for (let dx = 0; dx < width; dx++) taken[(y + dy) * map.width + x + dx] = 1;
+      }
+      found.push({ x, y, width, height });
+    }
+  }
+  return found;
+}
+
 export interface Reachability {
   /** Sizes of each connected walkable region, largest first. A well-formed map has one. */
   regionSizes: number[];

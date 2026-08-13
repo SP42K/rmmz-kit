@@ -3,7 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { ProjectSession } from '@rmmz-kit/core';
 import { GameSpecSchema } from '@rmmz-kit/gamegen';
-import { assetCatalog, databaseResource, gameBriefGuide, mapResource, projectSummary } from './resources.js';
+import { assetCatalog, databaseResource, gameBriefGuide, mapResource, projectSummary, tilesetResource } from './resources.js';
 import * as tools from './tools.js';
 
 /**
@@ -116,6 +116,18 @@ function registerResources(server: McpServer, session: ProjectSession): void {
       contents: [
         { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(databaseResource(session, String(table)), null, 2) },
       ],
+    })
+  );
+
+  server.registerResource(
+    'tileset',
+    new ResourceTemplate('rmmz://tileset/{id}', { list: undefined }),
+    {
+      description:
+        "One tileset's drawable tile ids: every autotile kind with its base id, sheet and passability, plus each plain page's id range. Read this before paint_tiles or set_tile_flags — a tile id cannot be guessed from a filename.",
+    },
+    async (uri, { id }) => ({
+      contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(tilesetResource(session, Number(id)), null, 2) }],
     })
   );
 
@@ -275,6 +287,31 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       },
     },
     async ({ mapId, width, height }) => json(tools.resizeMapTool(session, mapId, width, height))
+  );
+
+  server.registerTool(
+    'update_map',
+    {
+      description:
+        'Shallow-merge a patch into one map\'s own fields — encounterList/encounterStep, displayName, bgm/bgs and their autoplay flags, parallax, note. Tiles, events and size have their own tools and are refused here. Nested fields are replaced whole.',
+      inputSchema: { mapId: z.number().int(), patch: z.record(z.string(), z.unknown()) },
+    },
+    async ({ mapId, patch }) => json(tools.updateMap(session, mapId, patch))
+  );
+
+  server.registerTool(
+    'find_free_rect',
+    {
+      description:
+        'Find rectangles on a map where every tile is walkable and no event stands — where a house, a stall or a field can go. Returned rects do not overlap. Check the map with compose_map/validate afterwards: this says the space was free, not that filling it in leaves the map connected.',
+      inputSchema: {
+        mapId: z.number().int(),
+        width: z.number().int().min(1),
+        height: z.number().int().min(1),
+        limit: z.number().int().min(1).max(64).optional().describe('How many to return (default 8)'),
+      },
+    },
+    async (spec) => json(tools.findFreeRect(session, spec))
   );
 
   server.registerTool(
