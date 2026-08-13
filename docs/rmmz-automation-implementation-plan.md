@@ -867,26 +867,50 @@ Lv10（長篇商業 RPG 全自動）**刻意不在本計畫範圍內**，理由�
 
 ---
 
-## 8. 下一步
+## 8. 下一步（M11 後缺口總評，2026-08-12）
 
-M0–M8 已完成（見 `CLAUDE.md` status；M8 是照 §6 R2 降級成事件層交付的，理由與缺口見該節
-「實作結果」）。§8 原本的「起手三步」已全部達成，改列目前真正的下一步：
+M0–M11 全數交付（見 `CLAUDE.md` status）。issue #7 已解決（`exports` map ＋
+`rmmz-kit-source` 自訂 condition，`node packages/mcp/dist/bin.js <project>` 可直接被
+stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得完」劃分：
 
-1. ~~**決定 issue #7**~~：已解決 — 五個套件都加了 `exports` map（`rmmz-kit-source`
-   自訂 condition 指向 TS 原始碼，`default` 指向 `dist/`），外加 `tsconfig.base.json`
-   的 `customConditions` 與 `vitest.config.ts` 的 `resolve.conditions`。
-   `npm run build` 後 `node packages/mcp/dist/bin.js <project>` 可直接被
-   Claude Desktop 這類 stdio client 接上。
-2. **M6.5 資料庫完備**：編輯器對等（§0 對照表）最便宜的一格——`tables.ts` 加三表 +
-   `update_system`，半週。
-3. **M7 地圖**：先做 L0 create-file 前置，再 `create_map` / `paint_tiles` / autotile /
-   通行度，後半接原地圖合成。
-4. ~~**M7.5 Tier 2 → M7.6 插件與素材 → M8（前段先交付 playtest）→ M9 repair loop →
-   M10 端到端 → M11 部署**~~：已完成，M0–M11 全數交付。剩下的只有 L2 Tier 3，以及各
-   milestone 那些需要付費編輯器／真實模型才能收尾的驗收右半邊（M6 勝率誤差、M8 跑畫面、
-   M9 修復率、M10 一句話成規格、M11 瀏覽器通關與編輯器開啟）——每一項的收尾步驟都寫在
-   `CLAUDE.md` 對應段落的「Acceptance, honestly split」裡，且都不需要改 `src/`。
-5. **M8 的瀏覽器半邊**：要在真實授權專案上補（見 M8 「實作結果」的缺口表）。這是唯一一個
-   「本 repo 內做不完」的項目，不是待辦而是前提。
-6. 若要對外開放 MCP 工具層（而非僅本機 agent 使用），先處理 §6 R8（白名單缺口）。`playtest`
-   起的站台預設只綁 loopback，同一條理由。
+### 8.1 本 repo 內做得完的待辦（建議順序）
+
+1. **§4.2 具名 switch/variable sugar**（`quest.herb.started`）— DSL 至今只吃數字 id。
+   槓桿最大的一項，一次堵三件事：它本身、M6.5 缺口 #2 的修法（allocator 需要自己的
+   namespace 佔用紀錄，而非讀 System.json 名稱陣列）、§4.4 quest-graph/softlock 分析的
+   前置（沒有 namespace 模型就沒有圖可分析）。
+2. **§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
+   typed node 已拿得到這些 id，技術阻礙已消失，只是沒人排程；`references.ts` 模式現成，
+   半天級。
+3. **L2 Tier 3**（§4.3）— 231–235 圖片、261 影片、載具、281–285、331–333。目前走
+   `RawNode` 不會掉資料，需求驅動再做。
+4. **刪除地圖** — §0 對照表註明「刪除地圖仍未做」，地圖生命週期唯一缺角。
+5. **`cli/` 套件的去留** — §1.2 與決策 A 都畫了它，從未建；MCP bin 已覆蓋大部分用途。
+   下次改 plan 時明確二選一：補做或從 §1.2 刪掉。
+
+### 8.2 已記錄的刻意遞延（各有觸發條件，不算欠帳）
+
+| 項目 | 觸發條件 |
+|---|---|
+| M6.5 #2（allocator 佔用紀錄） | 併入 §8.1-1 |
+| M7 #1（`composeMap` throw 前已寫入 session） | 出現第二個「先驗再落地」呼叫端 |
+| M7 #2（`resizeMap` 全圖重算）＋ autotile 越界 clamp | 對照過真實編輯器輸出 |
+| M7.6 插件重排/刪除、`readRaw` 無 drift 檢查 | 有呼叫端／有人踩到 |
+| §6 R8 白名單 | 對外開放 MCP 工具層時 |
+
+### 8.3 本 repo 內做不完的（缺付費編輯器或真實模型，是前提不是待辦）
+
+每項 `CLAUDE.md` 都有「Acceptance, honestly split」段落，且都不需改 `src/`：
+
+| 缺口 | 需要什麼 |
+|---|---|
+| M6 勝率誤差 < 10% | MZ 內建範例資料庫＋真實遊玩比對 |
+| M8 瀏覽器半邊（Playwright 驅動 `__AT`） | MZ runtime（付費） |
+| M9 修復率 ≥ 靜態 8/10、動態 4/10 | 真實模型接 `runRepairLoop` |
+| M10 一句話 → spec | 真實模型讀 `rmmz://game-brief-guide` |
+| M11 瀏覽器通關、編輯器開啟 | 引擎＋編輯器（付費） |
+| §6 R1/R9 golden file 對真實編輯器輸出 | 授權機器上手畫樣張比對（現有 golden 只對 fixture） |
+
+這六項共用一個收尾動作：在一台有授權 MZ 的機器上跑一輪
+（`create_project --runtimeFrom` → 編輯器開啟 → `playtest` + Playwright → `deploy` 通關），
+一次關掉 M8 / M11 / R9 三項。整批等授權機器，不值得在此 repo 內動工。
