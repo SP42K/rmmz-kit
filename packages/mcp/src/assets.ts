@@ -7,8 +7,15 @@ import type { ProjectSession } from '@rmmz-kit/core';
  * the asset-catalog resource (what exists) and import_asset (where a new file
  * is allowed to land) — plan §4.5 leans on the catalog to stop models inventing
  * filenames, which only holds if imports can't invent folders either.
+ *
+ * js/plugins is here for the same reason: manage_plugins refuses a name with no
+ * js/plugins/<name>.js behind it, so without an import path for the file itself
+ * the third-party-plugin workflow dead-ends at "copy it in by hand". Listing the
+ * folder in the catalog also grounds manage_plugins names in what exists, exactly
+ * as the catalog grounds sprite and sound names.
  */
 export const ASSET_DIRS = [
+  'js/plugins',
   'img/characters',
   'img/faces',
   'img/enemies',
@@ -29,12 +36,14 @@ export const ASSET_DIRS = [
 
 /**
  * MZ picks the extension itself (`ImageManager` appends `.png`, `AudioManager`
- * tries `.ogg`/`.m4a`), so a file with any other extension is invisible to the
- * game — it just silently fails to load. Reject at import instead.
+ * tries `.ogg`/`.m4a`, `PluginManager.loadScript` appends `.js`), so a file
+ * with any other extension is invisible to the game — it just silently fails
+ * to load. Reject at import instead.
  */
-const ALLOWED_EXTENSIONS: Record<'img' | 'audio', string[]> = {
+const ALLOWED_EXTENSIONS: Record<'img' | 'audio' | 'js', string[]> = {
   img: ['.png'],
   audio: ['.ogg', '.m4a'],
+  js: ['.js'],
 };
 
 export interface ImportAssetSpec {
@@ -59,7 +68,7 @@ export async function importAsset(session: ProjectSession, spec: ImportAssetSpec
   if (name !== path.basename(name) || name.startsWith('.')) {
     throw new Error(`Asset name must be a plain filename, got ${JSON.stringify(name)}`);
   }
-  const allowed = ALLOWED_EXTENSIONS[spec.dir.split('/')[0] as 'img' | 'audio'];
+  const allowed = ALLOWED_EXTENSIONS[spec.dir.split('/')[0] as 'img' | 'audio' | 'js'];
   const extension = path.extname(name).toLowerCase();
   if (!allowed.includes(extension)) {
     throw new Error(`${spec.dir} takes ${allowed.join(' or ')} files; ${name} is ${extension || 'extensionless'}`);

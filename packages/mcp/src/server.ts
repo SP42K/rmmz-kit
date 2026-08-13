@@ -433,9 +433,9 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     'import_asset',
     {
       description:
-        'Copy an image or audio file into the right project folder. Lands with commit() like every other change, and shows up in rmmz://asset-catalog immediately.',
+        'Copy an image, audio, or plugin (.js) file into the right project folder. Lands with commit() like every other change, and shows up in rmmz://asset-catalog immediately. A file imported to js/plugins can be enabled with manage_plugins in the same session.',
       inputSchema: {
-        dir: z.string().describe('Target folder, e.g. img/characters or audio/se'),
+        dir: z.string().describe('Target folder, e.g. img/characters, audio/se, or js/plugins'),
         source: z.string().describe('Path of the file to copy in'),
         name: z.string().optional().describe("Target filename; defaults to the source's own"),
       },
