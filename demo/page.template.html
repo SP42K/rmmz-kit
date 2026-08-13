@@ -1,0 +1,1012 @@
+<title>藥草與洞窟</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* ------------------------------------------------------------------
+     Palette: a survey-drawing ground (cool blue-grey paper) with two warm
+     signals on it. The maps in this demo carry no art — what is drawn is
+     the passability grid the toolchain computed — so the page is styled as
+     a schematic rather than as a game, and the only saturated colours are
+     the two things a schematic marks: what you can interact with (ochre)
+     and where you are (crimson).
+     ------------------------------------------------------------------ */
+  :root {
+    --ground: #e7ecf1;
+    --panel: #fdfefe;
+    --panel-2: #f0f4f8;
+    --line: #c3d0dc;
+    --line-soft: #dbe4ec;
+    --ink: #0f1720;
+    --ink-dim: #566b7d;
+    --teal: #10636a;
+    --ochre: #9a6a15;
+    --crimson: #a5302a;
+    --pass: #226b45;
+    --fail: #a8261e;
+    --floor: #ffffff;
+    --wall: #a9b8c6;
+    --void: #dbe3ea;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+      "PingFang TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f151c;
+      --panel: #161e28;
+      --panel-2: #1b242f;
+      --line: #2b3846;
+      --line-soft: #222d39;
+      --ink: #e6edf4;
+      --ink-dim: #93a4b6;
+      --teal: #57bcc3;
+      --ochre: #dda746;
+      --crimson: #e2695a;
+      --pass: #5fc98d;
+      --fail: #f0897e;
+      --floor: #223140;
+      --wall: #131b24;
+      --void: #0b1015;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f151c;
+    --panel: #161e28;
+    --panel-2: #1b242f;
+    --line: #2b3846;
+    --line-soft: #222d39;
+    --ink: #e6edf4;
+    --ink-dim: #93a4b6;
+    --teal: #57bcc3;
+    --ochre: #dda746;
+    --crimson: #e2695a;
+    --pass: #5fc98d;
+    --fail: #f0897e;
+    --floor: #223140;
+    --wall: #131b24;
+    --void: #0b1015;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: clamp(24px, 5vw, 56px) clamp(16px, 4vw, 32px) 72px;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(32px, 5vw, 56px);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin: 0;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 44px);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    margin: 10px 0 0;
+    text-wrap: balance;
+  }
+  h2 {
+    font-size: clamp(19px, 2.4vw, 23px);
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 { font-size: 15px; margin: 0; letter-spacing: -0.005em; }
+  p { margin: 0; }
+  .lede { max-width: 68ch; color: var(--ink-dim); font-size: 16px; margin-top: 14px; }
+  a { color: var(--teal); }
+
+  header .status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    background: var(--panel);
+    color: var(--ink-dim);
+    white-space: nowrap;
+  }
+  .chip strong { color: var(--ink); font-weight: 600; }
+  .chip.ok { border-color: color-mix(in srgb, var(--pass) 45%, var(--line)); color: var(--pass); }
+  .chip.ok strong { color: var(--pass); }
+
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .section-head { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .section-head p { color: var(--ink-dim); font-size: 14.5px; max-width: 72ch; }
+
+  /* --- the playable stage --------------------------------------------- */
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+  }
+  .viewport { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .viewport-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .viewport-head .name { font-size: 15px; font-weight: 600; }
+  .viewport-head .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); }
+  canvas { display: block; width: 100%; height: auto; background: var(--void); border-radius: 2px; touch-action: none; }
+
+  .dialogue {
+    border-top: 1px solid var(--line-soft);
+    padding-top: 10px;
+    min-height: 92px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .speaker { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ochre); }
+  .say { font-size: 15.5px; }
+  .hint { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  button {
+    font: inherit;
+    font-size: 13.5px;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: 7px 13px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  button:hover { background: var(--panel); border-color: var(--teal); }
+  button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  button.primary { background: var(--teal); border-color: var(--teal); color: var(--panel); }
+  button.primary:hover { filter: brightness(1.08); }
+  button[disabled] { opacity: 0.45; cursor: default; }
+
+  .rail { display: flex; flex-direction: column; gap: 12px; }
+  .rail .panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .rail h3 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+  .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .kv span:first-child { flex: none; white-space: nowrap; color: var(--ink-dim); }
+  .kv span:last-child { font-family: var(--mono); text-align: right; min-width: 0; }
+  .flags { display: flex; flex-direction: column; gap: 4px; }
+  .flag { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); }
+  .flag i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); border: 1px solid var(--line); flex: none; }
+  .flag.on { color: var(--ink); }
+  .flag.on i { background: var(--pass); border-color: var(--pass); }
+  .legend { display: flex; flex-direction: column; gap: 5px; }
+  .legend div { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-dim); }
+  .legend i { width: 12px; height: 12px; border-radius: 2px; flex: none; border: 1px solid var(--line); }
+
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+  .pad button { padding: 9px 0; font-family: var(--mono); }
+  .pad .spacer { visibility: hidden; }
+
+  .log {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    max-height: 150px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 3px;
+  }
+  .log b { color: var(--ink); font-weight: 600; }
+
+  /* --- pipeline ------------------------------------------------------- */
+  .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 12px; }
+  .stage-card { padding: 14px; display: flex; flex-direction: column; gap: 8px; position: relative; }
+  .stage-card .num { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; color: var(--ink-dim); }
+  .stage-card .verdict { font-family: var(--mono); font-size: 11.5px; color: var(--pass); }
+  .stage-card ul { margin: 0; padding-left: 16px; font-size: 13px; color: var(--ink-dim); display: flex; flex-direction: column; gap: 3px; }
+  .stage-card code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  .table-wrap { overflow-x: auto; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  th { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .verdict-pass { color: var(--pass); font-family: var(--mono); font-size: 12.5px; }
+  .verdict-fail { color: var(--fail); font-family: var(--mono); font-size: 12.5px; }
+
+  .runner { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+  .runner-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .note { padding: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .note p { font-size: 13.5px; color: var(--ink-dim); }
+  .note.warn { border-left: 3px solid var(--ochre); }
+
+  pre {
+    margin: 0;
+    padding: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  footer { border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-dim); font-size: 13px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">rmmz-kit · 生成 → 驗證 → 試玩</p>
+    <h1>藥草與洞窟</h1>
+    <p class="lede">
+      這個小遊戲不是手寫的。一份 <code>GameSpec</code> 交給 <code>generate_game</code>，
+      它產出三張地圖、三條任務鏈與一場終局戰鬥，接著讓驗證器、戰鬥模擬器和事件層腳本各自檢查一遍。
+      下面可以直接走走看——頁面跑的是這個 repo 自己的事件直譯器，用 esbuild 打包成瀏覽器版本。
+    </p>
+    <div class="status" id="status"></div>
+  </header>
+
+  <section class="stage">
+    <div class="panel viewport">
+      <div class="viewport-head">
+        <span class="name" id="map-name">—</span>
+        <span class="meta" id="map-meta"></span>
+      </div>
+      <canvas id="map" aria-label="地圖，方向鍵移動"></canvas>
+      <div class="dialogue" id="dialogue"></div>
+    </div>
+
+    <aside class="rail">
+      <div class="panel">
+        <h3>隊伍狀態</h3>
+        <div class="kv"><span>金錢</span><span id="gold">0</span></div>
+        <div class="kv"><span>持有物品</span><span id="items">—</span></div>
+        <div class="kv"><span>隊員</span><span id="party">—</span></div>
+      </div>
+
+      <div class="panel">
+        <h3>開關（namespace）</h3>
+        <div class="flags" id="flags"></div>
+      </div>
+
+      <div class="panel">
+        <h3>操作</h3>
+        <div class="pad">
+          <span class="spacer"></span><button data-move="8">↑</button><span class="spacer"></span>
+          <button data-move="4">←</button><button data-move="2">↓</button><button data-move="6">→</button>
+        </div>
+        <button id="act" class="primary">互動 (Space)</button>
+        <button id="reset">重新開始</button>
+        <div class="legend">
+          <div><i style="background: var(--floor)"></i>可通行（依 tileset 通行旗標）</div>
+          <div><i style="background: var(--wall)"></i>不可通行</div>
+          <div><i style="background: var(--ochre)"></i>目前有作用的事件</div>
+          <div><i style="background: var(--void)"></i>條件未達成、沒有反應的事件</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>事件記錄</h3>
+        <div class="log" id="log"></div>
+      </div>
+    </aside>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>這個遊戲是怎麼來的</h2>
+      <p>
+        每一格都是 spec 的函數，沒有人手動擺過一個事件。下面五個階段全在記憶體中的
+        <code>ProjectSession</code> 上跑完才決定要不要寫入磁碟——驗證沒過就什麼都不會落地。
+      </p>
+    </div>
+    <div class="stages" id="stages"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>戰鬥模擬</h2>
+      <p>
+        MZ 的傷害公式是一段 <code>eval</code> 字串，所以不需要瀏覽器也能算。這幾場是在 Node 裡各跑 300 次的結果；
+        你在上面觸發戰鬥時，勝負就是拿這裡的勝率擲骰決定的。
+      </p>
+    </div>
+    <div class="panel table-wrap"><table id="battles"></table></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>通關腳本</h2>
+      <p>
+        <code>walkthrough</code> 從頭玩到尾，斷言終局開關真的被打開；<code>gates</code> 反過來確認開局時每一道鎖都還鎖著。
+        兩份腳本是從 spec 推導出來的，不是從產生出來的事件反推——否則它們只會跟自己一致。
+        下面這顆按鈕就在你的瀏覽器裡跑同一份 <code>runScenario</code>。
+      </p>
+    </div>
+    <div class="panel runner">
+      <div class="runner-head">
+        <button id="run-suite" class="primary">在瀏覽器執行這兩份腳本</button>
+        <span class="hint" id="run-note">Node 端結果已附在下表，按下按鈕會就地重跑一次。</span>
+      </div>
+      <div class="table-wrap"><table id="scenarios"></table></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>這個頁面證明了什麼、沒證明什麼</h2>
+      <p>把界線寫清楚，比讓 demo 看起來更厲害重要。</p>
+    </div>
+    <div class="notes">
+      <div class="note panel">
+        <h3>會動的是事件層，不是 MZ</h3>
+        <p>
+          MZ 的執行檔（<code>js/rmmz_*.js</code>、PIXI、場景圖）隨付費編輯器出貨，不在這個 repo 裡。
+          所以這裡沒有 MZ 的畫面，跑的是 <code>packages/playtest</code> 的直譯器：分支、迴圈、開關、
+          自我開關、物品、傳送、頁面條件都照 <code>Game_Interpreter</code> 的語意走。
+        </p>
+      </div>
+      <div class="note panel">
+        <h3>畫面是通行旗標，不是美術</h3>
+        <p>
+          地圖上的方格直接畫 <code>Tilesets.json</code> 的通行旗標，由 mapgen 的 <code>checkPassage</code>
+          在 Node 端算好——那是 <code>Game_Map.checkPassage</code> 的移植。專案裡沒有任何圖檔，
+          所以事件在真正的 MZ 裡也還是隱形的，這裡用標記代替。
+        </p>
+      </div>
+      <div class="note panel warn">
+        <h3>戰鬥沒有真的打</h3>
+        <p>
+          事件層只被「告知」勝負，傷害計算是 <code>simulate_battle</code> 的工作。
+          頁面拿模擬勝率擲骰，所以你會看到終局偶爾落敗——1% 的那一邊。
+        </p>
+      </div>
+      <div class="note panel">
+        <h3>沒有經過真正的編輯器</h3>
+        <p>
+          產出的 <code>data/*.json</code> 從未被 RPG Maker MZ 開過。格式假設集中在
+          <code>io/format.ts</code> 一個模組裡，就是為了哪天對上真實編輯器輸出時只需要改一個檔案。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>重現這一頁</h2>
+      <p>在 repo 根目錄執行，產出的 HTML 就是你正在看的這一份。</p>
+    </div>
+    <pre>npm install &amp;&amp; npm run build
+node demo/generate-demo.mjs /tmp/game.json     # spec → 專案 + 報告
+npx esbuild demo/browser-entry.js --bundle --format=iife \
+  --platform=browser --minify \
+  --alias:@rmmz-kit/core=./demo/core-shim.js --outfile=/tmp/runtime.js
+node demo/build-page.mjs /tmp/game.json /tmp/runtime.js demo.html</pre>
+  </section>
+
+  <footer>
+    由 <code>packages/gamegen</code> 產生、<code>packages/validate</code> 檢查、<code>packages/battlesim</code>
+    模擬、<code>packages/playtest</code> 執行。專案沒有被 commit——所有寫入都留在 <code>ProjectSession</code> 的交易裡。
+  </footer>
+</div>
+
+<script>__RUNTIME__</script>
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+  (() => {
+    'use strict';
+    const P = JSON.parse(document.getElementById('payload').textContent);
+    const K = globalThis.RmmzKit;
+    const session = new K.MemorySession(P.data);
+    const report = P.report;
+    const areas = report.build.areas;
+    const areaOf = (id) => areas.find((a) => a.mapId === id);
+    const namespaces = P.data['RmmzKitNamespaces.json'].namespaces;
+
+    /** id → dotted name, so the HUD shows `quest.herb.done` rather than "switch 3". */
+    const switchNames = new Map();
+    for (const [ns, entry] of Object.entries(namespaces)) {
+      for (const [member, id] of Object.entries(entry.switches ?? {})) switchNames.set(id, ns + '.' + member);
+    }
+    const itemNames = new Map(
+      (P.data['Items.json'] ?? []).filter(Boolean).map((row) => [row.id, row.name])
+    );
+    const actorNames = new Map(
+      (P.data['Actors.json'] ?? []).filter(Boolean).map((row) => [row.id, row.name])
+    );
+    const winRates = new Map(report.battles.map((b) => [b.troopId, b.winRate]));
+    const clearSwitch = namespaces.game.switches.clear;
+
+    let state = K.GameState.fromSession(session);
+    let busy = false;
+
+    // GameState is all public, plain-data fields, so a copy is a copy of those.
+    // The page re-runs an event from a copy every time it needs an answer from
+    // the player (see runEvent below), and the copy is what keeps a discarded
+    // attempt from leaving half its effects behind.
+    const clone = (s) => {
+      const c = new K.GameState();
+      c.switches = new Map(s.switches);
+      c.variables = new Map(s.variables);
+      c.selfSwitches = new Map(s.selfSwitches);
+      c.gold = s.gold;
+      c.inventory = new Map(s.inventory);
+      c.party = [...s.party];
+      c.player = { ...s.player };
+      c.messages = [...s.messages];
+      c.choices = [...s.choices];
+      c.frames = s.frames;
+      return c;
+    };
+
+    const mapData = (id) => session.readFile(K.mapFileName(id));
+    const query = () => new K.Interpreter(session, state);
+
+    /* ---------------- rendering ---------------- */
+    const canvas = document.getElementById('map');
+    const ctx = canvas.getContext('2d');
+    let cell = 20;
+
+    const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    function layout() {
+      const map = mapData(state.player.mapId);
+      const avail = canvas.parentElement.clientWidth;
+      cell = Math.max(9, Math.min(22, Math.floor(avail / map.width)));
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = map.width * cell * dpr;
+      canvas.height = map.height * cell * dpr;
+      canvas.style.height = map.height * cell + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function draw() {
+      const mapId = state.player.mapId;
+      const map = mapData(mapId);
+      const grid = P.pass[mapId];
+      const colors = {
+        floor: css('--floor'),
+        wall: css('--wall'),
+        void: css('--void'),
+        line: css('--line-soft'),
+        ochre: css('--ochre'),
+        crimson: css('--crimson'),
+        ink: css('--ink'),
+        dim: css('--ink-dim'),
+        panel: css('--panel'),
+      };
+
+      ctx.fillStyle = colors.void;
+      ctx.fillRect(0, 0, map.width * cell, map.height * cell);
+
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          const v = grid[y * map.width + x];
+          // 15 = passable in all four directions, 0 = blocked from every side.
+          // Anything between is a one-way tile; drawn as floor with a hint of
+          // wall so it is visible without inventing a third meaning.
+          ctx.fillStyle = v === 0 ? colors.wall : colors.floor;
+          ctx.fillRect(x * cell, y * cell, cell, cell);
+          if (v !== 0 && v !== 15) {
+            ctx.fillStyle = colors.wall;
+            ctx.globalAlpha = 0.4;
+            ctx.fillRect(x * cell, y * cell, cell, cell);
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+
+      ctx.strokeStyle = colors.line;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      for (let x = 0; x <= map.width; x++) { ctx.moveTo(x * cell + 0.5, 0); ctx.lineTo(x * cell + 0.5, map.height * cell); }
+      for (let y = 0; y <= map.height; y++) { ctx.moveTo(0, y * cell + 0.5); ctx.lineTo(map.width * cell, y * cell + 0.5); }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      const it = query();
+      const labels = [];
+      for (const ev of map.events.filter(Boolean)) {
+        const active = it.properPageIndex(mapId, ev.id) >= 0;
+        const cx = ev.x * cell;
+        const cy = ev.y * cell;
+        ctx.fillStyle = active ? colors.ochre : colors.void;
+        ctx.strokeStyle = active ? colors.ochre : colors.dim;
+        ctx.lineWidth = 1.5;
+        const pad = Math.max(2, cell * 0.18);
+        ctx.beginPath();
+        ctx.roundRect(cx + pad, cy + pad, cell - pad * 2, cell - pad * 2, 2);
+        ctx.fill();
+        ctx.stroke();
+        labels.push({ x: cx + cell / 2, y: cy, text: ev.name, active });
+      }
+
+      ctx.font = '600 10px ' + css('--mono');
+      ctx.textAlign = 'center';
+      for (const label of labels) {
+        const w = ctx.measureText(label.text).width + 8;
+        ctx.globalAlpha = 0.92;
+        ctx.fillStyle = colors.panel;
+        ctx.fillRect(label.x - w / 2, label.y - 15, w, 13);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = label.active ? colors.ink : colors.dim;
+        ctx.fillText(label.text, label.x, label.y - 5);
+      }
+
+      // The player, with a notch for the direction the interact key looks in.
+      const px = state.player.x * cell + cell / 2;
+      const py = state.player.y * cell + cell / 2;
+      ctx.fillStyle = colors.crimson;
+      ctx.beginPath();
+      ctx.arc(px, py, cell * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      const [dx, dy] = DELTA[state.player.direction];
+      ctx.strokeStyle = colors.crimson;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(px + dx * cell * 0.22, py + dy * cell * 0.22);
+      ctx.lineTo(px + dx * cell * 0.5, py + dy * cell * 0.5);
+      ctx.stroke();
+    }
+
+    /* ---------------- movement ---------------- */
+    const DELTA = { 2: [0, 1], 4: [-1, 0], 6: [1, 0], 8: [0, -1] };
+    const OUT_BIT = { 2: 1, 4: 2, 6: 4, 8: 8 };
+    const IN_BIT = { 2: 8, 4: 4, 6: 2, 8: 1 };
+
+    function blockingEventAt(mapId, x, y) {
+      const it = query();
+      for (const ev of mapData(mapId).events.filter(Boolean)) {
+        if (ev.x !== x || ev.y !== y) continue;
+        const page = it.properPageIndex(mapId, ev.id);
+        if (page < 0) continue;
+        const p = ev.pages[page];
+        if (!p.through && p.priorityType === 1) return ev;
+      }
+      return null;
+    }
+
+    function move(dir) {
+      if (busy) return;
+      state.player.direction = dir;
+      const map = mapData(state.player.mapId);
+      const [dx, dy] = DELTA[dir];
+      const nx = state.player.x + dx;
+      const ny = state.player.y + dy;
+      const grid = P.pass[state.player.mapId];
+      const inside = nx >= 0 && ny >= 0 && nx < map.width && ny < map.height;
+      // A step needs the tile you leave to be passable outward and the tile you
+      // enter passable inward — the same two-sided test analyzeReachability makes.
+      const open =
+        inside &&
+        (grid[state.player.y * map.width + state.player.x] & OUT_BIT[dir]) !== 0 &&
+        (grid[ny * map.width + nx] & IN_BIT[dir]) !== 0 &&
+        !blockingEventAt(state.player.mapId, nx, ny);
+      if (open) { state.player.x = nx; state.player.y = ny; }
+      draw();
+    }
+
+    /* ---------------- dialogue plumbing ---------------- */
+    const dialogue = document.getElementById('dialogue');
+    let pending = null;
+
+    function idle() {
+      pending = null;
+      const it = query();
+      const facing = facingEvent();
+      dialogue.innerHTML = '';
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      if (state.switchValue(clearSwitch)) hint.textContent = '★ game.clear 已開啟——這局結束了。可以按「重新開始」再玩一次。';
+      else if (facing) {
+        hint.textContent =
+          it.properPageIndex(state.player.mapId, facing.id) >= 0
+            ? '面前是「' + facing.name + '」，按 Space 互動。'
+            : '面前是「' + facing.name + '」，但目前沒有任何頁面條件成立——不會有反應。';
+      } else hint.textContent = '方向鍵移動，Space 與面前的事件互動。';
+      dialogue.appendChild(hint);
+    }
+
+    function facingEvent() {
+      const [dx, dy] = DELTA[state.player.direction];
+      const tx = state.player.x + dx;
+      const ty = state.player.y + dy;
+      return mapData(state.player.mapId).events.filter(Boolean).find((e) => e.x === tx && e.y === ty) ?? null;
+    }
+
+    function showMessages(list) {
+      if (list.length === 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        let i = 0;
+        const step = () => {
+          if (i >= list.length) { pending = null; resolve(); return; }
+          const m = list[i++];
+          dialogue.innerHTML = '';
+          if (m.speaker) {
+            const s = document.createElement('p');
+            s.className = 'speaker';
+            s.textContent = m.speaker;
+            dialogue.appendChild(s);
+          }
+          for (const line of m.lines) {
+            const p = document.createElement('p');
+            p.className = 'say';
+            p.textContent = line;
+            dialogue.appendChild(p);
+          }
+          const more = document.createElement('p');
+          more.className = 'hint';
+          more.textContent = i < list.length ? '按 Space 繼續 (' + i + '/' + list.length + ')' : '按 Space 結束';
+          dialogue.appendChild(more);
+          pending = { kind: 'advance', go: step };
+        };
+        step();
+      });
+    }
+
+    function askChoice(options) {
+      return new Promise((resolve) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'choices';
+        options.forEach((text, index) => {
+          const b = document.createElement('button');
+          b.textContent = text;
+          b.onclick = () => { pending = null; resolve(index); };
+          wrap.appendChild(b);
+        });
+        dialogue.appendChild(wrap);
+        pending = { kind: 'choice' };
+        wrap.querySelector('button').focus();
+      });
+    }
+
+    /** Longest common prefix of several message arrays, compared structurally. */
+    function commonPrefix(runs) {
+      const key = (m) => JSON.stringify(m);
+      let n = Math.min(...runs.map((r) => r.length));
+      for (let i = 0; i < n; i++) {
+        const first = key(runs[0][i]);
+        if (runs.some((r) => key(r[i]) !== first)) return runs[0].slice(0, i);
+      }
+      return runs[0].slice(0, n);
+    }
+
+    function log(text, strong) {
+      const line = document.createElement('div');
+      line.innerHTML = strong ? '<b>' + text + '</b>' : text;
+      document.getElementById('log').prepend(line);
+    }
+
+    /**
+     * Run one event, asking the player whatever `Game_Interpreter` would ask a
+     * human. The interpreter is synchronous and takes its answers from a queue
+     * up front, so the page cannot pause it mid-run — instead it re-runs the
+     * event from a copy of the state each time it discovers an unanswered
+     * question, with one more answer in the queue. Discarded runs never touch
+     * `state`, so nothing is applied twice.
+     *
+     * Which messages came *before* the question is recoverable without changing
+     * the interpreter: run every branch and take the common prefix. The
+     * divergence point is the question.
+     */
+    async function runEvent(ev) {
+      const mapId = state.player.mapId;
+      const choices = [];
+      const battles = [];
+      let shown = state.messages.length;
+
+      for (let guard = 0; guard < 40; guard++) {
+        const work = clone(state);
+        const it = new K.Interpreter(session, work, { choices, battles, maxCommands: 200000 });
+        try {
+          it.runEvent(mapId, ev.id);
+        } catch (err) {
+          log('✕ ' + ev.name + '：' + err.message, true);
+          await showMessages([{ speaker: '', face: '', lines: ['（' + err.message + '）'] }]);
+          return;
+        }
+
+        if (work.choices.length > choices.length) {
+          const options = work.choices[choices.length].choices;
+          const runs = options.map((_, index) => {
+            const probe = clone(state);
+            const pit = new K.Interpreter(session, probe, { choices: [...choices, index], battles, maxCommands: 200000 });
+            try { pit.runEvent(mapId, ev.id); } catch { /* a branch that throws still shares the prefix */ }
+            return probe.messages;
+          });
+          await showMessages(commonPrefix(runs).slice(shown));
+          shown = commonPrefix(runs).length;
+          choices.push(await askChoice(options));
+          continue;
+        }
+
+        if (it.battles.length > battles.length) {
+          const call = it.battles[battles.length];
+          const rate = winRates.get(call.troopId) ?? 1;
+          const outcome = Math.random() < rate ? 'win' : 'lose';
+          const runs = ['win', 'lose'].map((o) => {
+            const probe = clone(state);
+            const pit = new K.Interpreter(session, probe, { choices, battles: [...battles, o], maxCommands: 200000 });
+            try { pit.runEvent(mapId, ev.id); } catch { /* same */ }
+            return probe.messages;
+          });
+          await showMessages(commonPrefix(runs).slice(shown));
+          shown = commonPrefix(runs).length;
+          const label = outcome === 'win' ? '勝利' : '落敗';
+          log('⚔ 戰鬥 troop ' + call.troopId + '（模擬勝率 ' + Math.round(rate * 100) + '%）→ ' + label, true);
+          await showMessages([
+            { speaker: '戰鬥', face: '', lines: ['以模擬勝率 ' + Math.round(rate * 100) + '% 擲骰，結果：' + label + '。'] },
+          ]);
+          battles.push(outcome);
+          continue;
+        }
+
+        const before = new Set(state.switches.keys());
+        const fromMap = state.player.mapId;
+        await showMessages(work.messages.slice(shown));
+        state = work;
+
+        for (const [id, value] of state.switches) {
+          if (!before.has(id) && value) log('◆ ' + (switchNames.get(id) ?? 'switch ' + id) + ' = on', true);
+        }
+        if (state.player.mapId !== fromMap) {
+          const area = areaOf(state.player.mapId);
+          log('→ 傳送到 ' + (area ? area.name : 'map ' + state.player.mapId));
+          layout();
+        }
+        return;
+      }
+      log('✕ ' + ev.name + '：問題問不完，放棄這次執行', true);
+    }
+
+    async function interact() {
+      if (busy || pending) return;
+      const ev = facingEvent();
+      if (!ev) return;
+      if (query().properPageIndex(state.player.mapId, ev.id) < 0) {
+        await showMessages([
+          { speaker: ev.name, face: '', lines: ['（沒有任何頁面條件成立——這個事件現在是關著的）'] },
+        ]);
+        idle();
+        return;
+      }
+      busy = true;
+      try {
+        await runEvent(ev);
+      } finally {
+        busy = false;
+        hud();
+        draw();
+        idle();
+      }
+    }
+
+    /* ---------------- HUD ---------------- */
+    function hud() {
+      document.getElementById('gold').textContent = state.gold + ' G';
+      const carried = [...state.inventory.entries()]
+        .filter(([, n]) => n > 0)
+        .map(([key, n]) => {
+          const [kind, id] = key.split(',');
+          const name = kind === 'item' ? itemNames.get(Number(id)) : kind + ' ' + id;
+          return (name ?? key) + ' ×' + n;
+        });
+      document.getElementById('items').textContent = carried.length ? carried.join('、') : '—';
+      document.getElementById('party').textContent = state.party
+        .map((id) => actorNames.get(id) ?? 'actor ' + id)
+        .join('、');
+
+      const flags = document.getElementById('flags');
+      flags.innerHTML = '';
+      for (const [id, name] of [...switchNames.entries()].sort((a, b) => a[0] - b[0])) {
+        const on = state.switchValue(id);
+        const row = document.createElement('div');
+        row.className = 'flag' + (on ? ' on' : '');
+        row.innerHTML = '<i></i><span>' + name + '</span>';
+        flags.appendChild(row);
+      }
+
+      const area = areaOf(state.player.mapId);
+      document.getElementById('map-name').textContent = area ? area.name : 'Map ' + state.player.mapId;
+      const map = mapData(state.player.mapId);
+      document.getElementById('map-meta').textContent =
+        map.width + '×' + map.height + ' · ' + map.events.filter(Boolean).length + ' events · ' +
+        (area ? area.regionSizes.length + ' region' : '');
+    }
+
+    /* ---------------- static report sections ---------------- */
+    function fillStatus() {
+      const s = document.getElementById('status');
+      const cov = report.scenarios[0].coverage;
+      const chips = [
+        ['狀態', report.ok ? '全部通過' : '未通過', report.ok],
+        ['地圖', areas.length + ' 張', false],
+        ['任務', report.build.quests.length + ' 條', false],
+        ['驗證新問題', report.findings.length + ' 個', false],
+        ['指令覆蓋率', cov.percent + '%', false],
+      ];
+      for (const [label, value, ok] of chips) {
+        const el = document.createElement('span');
+        el.className = 'chip' + (ok ? ' ok' : '');
+        el.innerHTML = label + ' <strong>' + value + '</strong>';
+        s.appendChild(el);
+      }
+    }
+
+    function fillStages() {
+      const cov = report.scenarios[0].coverage;
+      const stages = [
+        {
+          name: 'checkSpec',
+          layer: 'gamegen',
+          verdict: report.issues.length === 0 ? '沒有結構問題' : report.issues.length + ' 個問題',
+          items: ['requires 沒有環', '每個區域都連得到', '引用的 actor / item / troop 都存在'],
+        },
+        {
+          name: 'buildGame',
+          layer: 'mapgen',
+          verdict: areas.map((a) => a.regionSizes.length).every((n) => n === 1) ? '每張圖都是單一連通區' : '有孤立區域',
+          items: areas.map((a) => a.name + '：' + a.regionSizes[0] + ' 格可走'),
+        },
+        {
+          name: 'validateProject',
+          layer: 'validate',
+          verdict: report.findings.length === 0 ? '沒有新增問題' : report.findings.length + ' 個新問題',
+          items: ['懸空引用', '死掉的事件頁', '結構配對（111/411/412…）'],
+        },
+        {
+          name: 'simulate',
+          layer: 'battlesim',
+          verdict: report.battles.every((b) => b.ok) ? '每場都打得贏' : '有打不過的戰鬥',
+          items: report.battles.map((b) => b.what + '：' + Math.round(b.winRate * 100) + '%'),
+        },
+        {
+          name: 'runScenario',
+          layer: 'playtest',
+          verdict: report.scenarios.every((s) => s.pass) ? '兩份腳本都通過' : '腳本失敗',
+          items: [
+            report.scenarios.map((s) => s.name).join(' / '),
+            '指令覆蓋率 ' + cov.percent + '%、對白 ' + cov.messagePercent + '%',
+          ],
+        },
+      ];
+      const host = document.getElementById('stages');
+      stages.forEach((stage, i) => {
+        const card = document.createElement('div');
+        card.className = 'panel stage-card';
+        const items = stage.items.map((t) => '<li>' + t + '</li>').join('');
+        card.innerHTML =
+          '<span class="num">' + String(i + 1).padStart(2, '0') + ' · ' + stage.layer + '</span>' +
+          '<h3><code>' + stage.name + '</code></h3>' +
+          '<span class="verdict">' + stage.verdict + '</span>' +
+          '<ul>' + items + '</ul>';
+        host.appendChild(card);
+      });
+    }
+
+    function fillBattles() {
+      const t = document.getElementById('battles');
+      t.innerHTML =
+        '<thead><tr><th>戰鬥</th><th>Troop</th><th>勝率</th><th>判定</th><th>模擬器提醒</th></tr></thead>';
+      const body = document.createElement('tbody');
+      for (const b of report.battles) {
+        const row = document.createElement('tr');
+        row.innerHTML =
+          '<td>' + b.what + '</td>' +
+          '<td class="num">' + b.troopId + '</td>' +
+          '<td class="num">' + (b.winRate * 100).toFixed(1) + '%</td>' +
+          '<td class="' + (b.ok ? 'verdict-pass' : 'verdict-fail') + '">' + (b.ok ? 'pass' : 'wall') + '</td>' +
+          '<td>' + (b.warnings.length ? b.warnings.join(' ') : '—') + '</td>';
+        body.appendChild(row);
+      }
+      t.appendChild(body);
+    }
+
+    function renderScenarios(rows, where) {
+      const t = document.getElementById('scenarios');
+      t.innerHTML =
+        '<thead><tr><th>腳本</th><th>步驟</th><th>斷言</th><th>耗時</th><th>結果</th><th>執行位置</th></tr></thead>';
+      const body = document.createElement('tbody');
+      for (const s of rows) {
+        const row = document.createElement('tr');
+        row.innerHTML =
+          '<td><code>' + s.name + '</code></td>' +
+          '<td class="num">' + s.steps + '</td>' +
+          '<td class="num">' + s.checks + '</td>' +
+          '<td class="num">' + s.durationMs + ' ms</td>' +
+          '<td class="' + (s.pass ? 'verdict-pass' : 'verdict-fail') + '">' + (s.pass ? 'pass' : 'FAIL') + '</td>' +
+          '<td>' + where + '</td>';
+        body.appendChild(row);
+      }
+      t.appendChild(body);
+    }
+
+    document.getElementById('run-suite').onclick = (e) => {
+      const button = e.currentTarget;
+      button.disabled = true;
+      const started = performance.now();
+      const rows = report.suite.map((scenario) => {
+        const r = K.runScenario(session, scenario);
+        return {
+          name: r.name,
+          steps: r.steps.length,
+          checks: r.steps.reduce((n, step) => n + (step.checks ? step.checks.length : 0), 0),
+          durationMs: r.durationMs,
+          pass: r.pass,
+          failures: r.failures,
+        };
+      });
+      renderScenarios(rows, '這個瀏覽器');
+      const total = (performance.now() - started).toFixed(1);
+      const bad = rows.filter((r) => !r.pass);
+      document.getElementById('run-note').textContent = bad.length
+        ? '失敗：' + bad.flatMap((r) => r.failures).join('；')
+        : '兩份腳本在這個瀏覽器裡跑完，共 ' + total + ' ms，全部通過。';
+      button.disabled = false;
+    };
+
+    /* ---------------- wiring ---------------- */
+    document.addEventListener('keydown', (e) => {
+      const keys = { ArrowUp: 8, ArrowDown: 2, ArrowLeft: 4, ArrowRight: 6, w: 8, s: 2, a: 4, d: 6 };
+      if (e.key in keys) { e.preventDefault(); if (!pending && !busy) { move(keys[e.key]); idle(); } return; }
+      if (e.key === ' ' || e.key === 'Enter') {
+        if (document.activeElement && document.activeElement.tagName === 'BUTTON') return;
+        e.preventDefault();
+        if (pending && pending.kind === 'advance') pending.go();
+        else interact();
+      }
+    });
+    for (const b of document.querySelectorAll('[data-move]')) {
+      b.onclick = () => { if (!pending && !busy) { move(Number(b.dataset.move)); idle(); } };
+    }
+    document.getElementById('act').onclick = () => {
+      if (pending && pending.kind === 'advance') pending.go();
+      else interact();
+    };
+    document.getElementById('reset').onclick = () => {
+      state = K.GameState.fromSession(session);
+      document.getElementById('log').innerHTML = '';
+      log('重新開始');
+      layout();
+      hud();
+      draw();
+      idle();
+    };
+    window.addEventListener('resize', () => { layout(); draw(); });
+    const themeWatch = window.matchMedia('(prefers-color-scheme: dark)');
+    themeWatch.addEventListener('change', draw);
+    new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    fillStatus();
+    fillStages();
+    fillBattles();
+    renderScenarios(report.scenarios, 'Node');
+    layout();
+    hud();
+    draw();
+    idle();
+    log('開局於 ' + (areaOf(state.player.mapId) || {}).name);
+  })();
+</script>
