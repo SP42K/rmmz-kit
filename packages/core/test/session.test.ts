@@ -278,4 +278,56 @@ describe('ProjectSession', () => {
     expect(() => session.writeRaw('js/../../evil.js', 'x')).toThrow(/escapes the project root/);
     expect(() => session.writeRaw(path.join(dir, 'evil.js'), 'x')).toThrow(/escapes the project root/);
   });
+
+  it('deleteFile: gone from the session immediately, gone from disk and git only at commit', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    session.deleteFile('Animations.json');
+    expect(session.listFiles()).not.toContain('Animations.json');
+    expect(() => session.readFile('Animations.json')).toThrow(/Unknown data file/);
+    expect(session.deletedDataFiles()).toEqual(['Animations.json']);
+    // Nothing has touched disk yet.
+    expect(await readFile(path.join(dir, 'data', 'Animations.json'), 'utf-8')).toBeTruthy();
+
+    const hash = await session.commit('chore: drop Animations');
+    expect(hash).not.toBeNull();
+    await expect(readFile(path.join(dir, 'data', 'Animations.json'), 'utf-8')).rejects.toThrow();
+    // The deletion is staged and committed, not left as a dirty worktree entry.
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'status', '--porcelain']);
+    expect(stdout.trim()).toBe('');
+    expect(session.deletedDataFiles()).toEqual([]);
+  });
+
+  it('rollback resurrects a deleted file, and deleting a created file just forgets it', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    session.deleteFile('Animations.json');
+    session.createFile('Map099.json', { note: 'ephemeral' });
+    session.deleteFile('Map099.json');
+    expect(session.dirtyFiles()).toEqual([]);
+
+    session.rollback();
+    expect(session.listFiles()).toContain('Animations.json');
+    expect(session.listFiles()).not.toContain('Map099.json');
+    expect(await session.commit('feat: nothing left to commit')).toBeNull();
+  });
+
+  it('createFile over a pending deletion is a replace, not a "created" file', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    session.deleteFile('Animations.json');
+    session.createFile('Animations.json', []);
+    expect(session.deletedDataFiles()).toEqual([]);
+    // The created-file validate check ("already exists on disk") must not fire:
+    // the file being on disk is exactly what a replace expects.
+    expect((await session.validate()).errors).toEqual([]);
+    await session.commit('chore: empty out Animations');
+    expect(JSON.parse(await readFile(path.join(dir, 'data', 'Animations.json'), 'utf-8'))).toEqual([]);
+  });
 });
