@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { openProject } from '@rmmz-kit/core';
@@ -70,5 +70,45 @@ describe('deploy / create_project', () => {
     expect((await system.json()).gameTitle).toBe('Servable');
     expect((await fetch(`${server.url}/Game.rmmzproject`)).status).toBe(404);
     expect((await fetch(`${server.url}/data/RmmzKitNamespaces.json`)).status).toBe(404);
+  });
+
+  it('target macos assembles a .app with the game in Contents/Resources/app.nw, and warns about signing', async () => {
+    const dir = await scratch('MacGame');
+    await tools.createProjectTool(dir, { title: 'Servable' });
+    const session = await openProject(dir);
+    const out = await scratch('build');
+
+    // A stand-in for an unpacked nwjs.app: the shell assembly only needs the
+    // bundle's directory shape, not a real binary.
+    const nwApp = await scratch('nwjs.app');
+    await mkdir(path.join(nwApp, 'Contents', 'MacOS'), { recursive: true });
+    await writeFile(path.join(nwApp, 'Contents', 'MacOS', 'nwjs'), '');
+    await writeFile(path.join(nwApp, 'Contents', 'Info.plist'), '<plist/>');
+
+    const report = await tools.deploy(session, { outDir: out, target: 'macos', nwPath: nwApp });
+
+    const appNw = path.join(out, 'Servable.app', 'Contents', 'Resources', 'app.nw');
+    expect(await readFile(path.join(appNw, 'index.html'), 'utf-8')).toBeTruthy();
+    // The shell's own files came along.
+    expect(await readFile(path.join(out, 'Servable.app', 'Contents', 'Info.plist'), 'utf-8')).toBe('<plist/>');
+    // NW.js reads app.nw/package.json for the entry point — ours, not a stray one.
+    const pkg = JSON.parse(await readFile(path.join(appNw, 'package.json'), 'utf-8'));
+    expect(pkg.main).toBe('index.html');
+    // The editor project file must not ship inside the bundle either.
+    await expect(readFile(path.join(appNw, 'Game.rmmzproject'), 'utf-8')).rejects.toThrow();
+    expect(report.warnings as string[]).toContainEqual(expect.stringContaining('codesign'));
+  });
+
+  it('target macos without nwPath, or with a directory that is not a bundle, is refused before anything is written', async () => {
+    const dir = await scratch('MacGame');
+    await tools.createProjectTool(dir, { title: 'Refused' });
+    const session = await openProject(dir);
+
+    await expect(tools.deploy(session, { outDir: await scratch('b1'), target: 'macos' })).rejects.toThrow(/needs nwPath/);
+    const notABundle = await scratch('plain');
+    await mkdir(notABundle, { recursive: true });
+    await expect(
+      tools.deploy(session, { outDir: await scratch('b2'), target: 'macos', nwPath: notABundle })
+    ).rejects.toThrow(/no Contents\//);
   });
 });

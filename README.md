@@ -101,6 +101,7 @@ quest?" about an edit it has not committed.
 | Tool | |
 |---|---|
 | `create_map` | Write `Map###.json` and its MapInfos row; returns the allocated map id. |
+| `delete_map` | Delete a map and null its MapInfos row. Refused while the starting map, a MapInfos child, or a transfer from another file still points at it. |
 | `resize_map` | Resize anchored top-left. Events are never moved; any left out of bounds are returned. |
 | `paint_tiles` | Fill rectangles of one layer with a tile id, then re-derive autotile shapes over what changed. |
 | `set_tile_flags` | Passability, terrain tags and tile options (star/ladder/bush/counter/damage) for individual tile ids. |
@@ -130,7 +131,7 @@ quest?" about an edit it has not committed.
 |---|---|
 | `generate_game` | Spec → a whole small RPG (a map per area, portals, a gated quest chain, a boss), then prove it is finishable: validate, simulate every fight, play a generated walkthrough to the clear switch. |
 | `playtest` | Local playtest site over the project — the editor's Playtest button. Also stages `AutoTest.js`, which exposes `window.__AT` for browser automation. |
-| `deploy` | Export a shippable package, minus the editor project file, save data and unreferenced assets. `target: "windows"` wraps it in an NW.js shell you supply. |
+| `deploy` | Export a shippable package, minus the editor project file, save data and unreferenced assets. `target: "windows"` or `"macos"` wraps it in an NW.js shell you supply (the .app is not codesigned). |
 | `create_project` | Create a new MZ project from the blank template, git-initialised and ready for `openProject`. |
 
 ### Transaction
@@ -188,6 +189,10 @@ them needs a source change to close (plan §8.3):
 | Driving `window.__AT` from a browser | The MZ runtime (paid) |
 | Repair-rate and one-sentence→spec numbers | A real model in the loop — in this architecture the model is the MCP client, not this process |
 | Deployed build playable / project opens in editor | The engine and editor (paid) |
+
+`compose_map` generates dungeon-shaped maps — connected rooms and corridors. Towns,
+exteriors and anything with an art direction are `paint_tiles` plus a human (or the
+editor); the BSP generator was never meant to fake either.
 
 The headless scenario runner covers the event layer, not rendering, movement or TPB timing.
 Anything it does not model increments an `unmodeled` counter in its report instead of being

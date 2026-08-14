@@ -48,7 +48,17 @@ need-driven slice of §8.1-3, since pictures are how a game shows character
 busts; 234 (nested tone array), 261, vehicles, 281–285 and 331–333 still ride
 `RawNode`. `import_asset` additionally accepts `js/plugins` (`.js`), so a
 third-party plugin can be imported and enabled by `manage_plugins` in one
-session instead of dead-ending at "copy the file in by hand".
+session instead of dead-ending at "copy the file in by hand". §8.1-2 done
+(dangling weapon/armor/skill/state/troop/actor ids off decompiled typed nodes,
+plus actor→class / learnings→skill / enemy-actions→skill database rows — the
+rule's first run caught the fixture's own dangling classIds, now fixed).
+§8.1-4 done (`deleteFile` as core's third verb — unlink + `git add` at commit,
+resurrection at rollback, create-over-delete is a replace — and `delete_map`
+on top of it, refused while the starting map, a MapInfos child, or another
+file's transfer still points at the map). `deploy` grew `target: "macos"`
+(the game lands in `<Title>.app/Contents/Resources/app.nw`; the bundle is not
+codesigned and the report says so). The §8.1-1 tail (expression language,
+`!`/`&&`) remains not started.
 
 ## Commands
 

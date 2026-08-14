@@ -68,7 +68,7 @@ v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在�
 | 資料庫：flat 表（Actors…Troops、CommonEvents） | `upsert_database`（10 表） | ✓ | M5 已交付 |
 | 資料庫：System（標題/初始隊伍/用語/戰鬥系統） | `update_system`（object merge，非列模型） | ✓ | M6.5 已交付 |
 | 資料庫：Tilesets / Animations / MapInfos | `upsert_database` 加表 | ✓ | M6.5 已交付 |
-| 地圖生命週期（新建/改尺寸、地圖樹） | L0 create-file + `create_map`/`resize_map` | ✓（刪除地圖仍未做） | M7 已交付 |
+| 地圖生命週期（新建/改尺寸/刪除、地圖樹） | L0 create/delete-file + `create_map`/`resize_map`/`delete_map` | ✓ | M7 已交付；刪除隨 §8.1-4 補齊 |
 | 地圖繪製（tile / autotile / 通行度） | `paint_tiles` 原語 + L3.5 拼接 | ✓ | M7 已交付 |
 | 事件：Tier 1 命令 | `apply_script`（L2 編譯器） | ✓ | M3/M5 已交付 |
 | 事件：Tier 2（357 插件指令、商店、戰鬥、移動路線…） | L2 Tier 2 + `PageSpec.moveRoute` | ✓ | M7.5 已交付 |
@@ -883,16 +883,25 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
    「Namespaces and DSL name sugar」）；第三件（quest-graph 規則本身）是 M4 的活，
    前置已就位但仍未排程。完整表達式語言（`when: "!quest.herb.started"` 的 `!`/`&&`）
    也仍未做——resolver 就是它要編譯到的那一層。
-2. **§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
+2. ~~**§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
    typed node 已拿得到這些 id，技術阻礙已消失，只是沒人排程；`references.ts` 模式現成，
-   半天級。
+   半天級。~~ **已交付（2026-08）**：命令清單側走 decompiled typed node
+   （`checkTypedCommandIds`：weapon/armor/skill/state/troop/actor，actorId 0 =
+   全隊不算參照）；資料庫列側直讀（`checkDatabaseIds`：actor→class、class
+   learnings→skill、enemy actions→skill）。規則首跑即抓到 fixture 自身的
+   懸空 classId（actor 3/4），已一併修正。
 3. **L2 Tier 3**（§4.3）— 231–235 圖片、261 影片、載具、281–285、331–333。目前走
    `RawNode` 不會掉資料，需求驅動再做。**部分交付（2026-08）**：圖片子集
    231/232/233/235 以 `SIMPLE_COMMANDS` 表項落地（需求來自角色立繪演出）；
    234 因 tone 為巢狀陣列不合平面表模型，與 261／載具／281–285／331–333 一同
    維持 `RawNode`。232 的第 2 參數（未使用槽位）依 R1 級假設寫 0，型別不合的
    既有資料照舊退回 `RawNode`，不掉資料。
-4. **刪除地圖** — §0 對照表註明「刪除地圖仍未做」，地圖生命週期唯一缺角。
+4. ~~**刪除地圖** — §0 對照表註明「刪除地圖仍未做」，地圖生命週期唯一缺角。~~
+   **已交付（2026-08）**：core 補上第三個動詞 `deleteFile`（commit 時 unlink 並以
+   `git add` 暫存刪除、rollback 復活、delete 後 create 視為 replace），mapgen
+   `deleteMap` 帶三重防護（起始地圖、MapInfos 子地圖、其他檔案的 transfer 參照；
+   地圖內部的自我參照不擋——它隨地圖一起走），MCP 註冊 `delete_map`。
+   §8.1-1 尾註的表達式語言（`!`/`&&`）維持未做，觸發條件不變。
 5. **`cli/` 套件的去留** — §1.2 與決策 A 都畫了它，從未建；MCP bin 已覆蓋大部分用途。
    下次改 plan 時明確二選一：補做或從 §1.2 刪掉。
 
