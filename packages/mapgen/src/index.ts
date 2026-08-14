@@ -16,7 +16,7 @@ export {
 } from './autotile.js';
 export type { AutotileFamily } from './autotile.js';
 
-export { LAYERS, REGION_LAYER, SHADOW_LAYER, blankMap, createMap, paintMapData, paintTiles, resizeMap } from './edit.js';
+export { LAYERS, REGION_LAYER, SHADOW_LAYER, blankMap, createMap, deleteMap, paintMapData, paintTiles, resizeMap } from './edit.js';
 export type { CreateMapSpec, PaintOp, PaintSpec, ResizeResult } from './edit.js';
 
 export { FLAGS_LENGTH, analyzeReachability, checkPassage, defaultTilesetFlags, freeRects, setTileFlags } from './passage.js';

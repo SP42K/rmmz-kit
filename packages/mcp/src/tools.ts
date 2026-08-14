@@ -23,6 +23,7 @@ import { simulate, type BattleReport, type BattleSpec } from '@rmmz-kit/battlesi
 import {
   composeMap,
   createMap,
+  deleteMap,
   freeRects,
   paintTiles,
   resizeMap,
@@ -341,6 +342,11 @@ export function updateSystem(session: ProjectSession, patch: Record<string, unkn
  */
 export function createMapTool(session: ProjectSession, spec: CreateMapSpec): { id: number } {
   return { id: createMap(session, spec) };
+}
+
+export function deleteMapTool(session: ProjectSession, mapId: number): { deleted: string } {
+  deleteMap(session, mapId);
+  return { deleted: mapFileName(mapId) };
 }
 
 export function resizeMapTool(

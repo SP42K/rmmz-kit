@@ -7,6 +7,7 @@ import {
   analyzeReachability,
   autotileShape,
   createMap,
+  deleteMap,
   paintTiles,
   resizeMap,
   setTileFlags,
@@ -179,5 +180,108 @@ describe('analyzeReachability', () => {
     expect(regionSizes).toEqual([20, 20]);
     // Two equal regions, so one of the two events is stranded whichever wins.
     expect(unreachableEvents).toHaveLength(1);
+  });
+});
+
+describe('deleteMap', () => {
+  it('nulls the MapInfos row and removes the file, landing only on commit', async () => {
+    const id = createMap(session, { name: 'Doomed', width: 10, height: 10 });
+    await session.commit('add doomed map');
+    const onDisk = path.join(project.dir, 'data', `Map00${id}.json`);
+    expect(await readFile(onDisk, 'utf-8')).toBeTruthy();
+
+    deleteMap(session, id);
+    expect(session.listFiles()).not.toContain(`Map00${id}.json`);
+    expect(session.readFile<Array<MapInfo | null>>('MapInfos.json')[id]).toBeNull();
+    // Still on disk until commit — same transaction rules as every other change.
+    expect(await readFile(onDisk, 'utf-8')).toBeTruthy();
+
+    await session.commit('drop doomed map');
+    await expect(readFile(onDisk, 'utf-8')).rejects.toThrow();
+  });
+
+  it('refuses the starting map, a map with MapInfos children, and a map another file transfers into', async () => {
+    const a = createMap(session, { name: 'A', width: 10, height: 10 });
+    const b = createMap(session, { name: 'B', width: 10, height: 10, parentId: a });
+
+    // Children first: A is B's parent.
+    expect(() => deleteMap(session, a)).toThrow(/child maps/);
+
+    // Starting map: point System at B.
+    session.updateFile<{ startMapId?: number }>('System.json', (data) => {
+      data.startMapId = b;
+    });
+    expect(() => deleteMap(session, b)).toThrow(/starting map/);
+    session.updateFile<{ startMapId?: number }>('System.json', (data) => {
+      delete data.startMapId;
+    });
+
+    // A transfer from another file: Map001 transfers into B.
+    session.updateFile<MapData>('Map001.json', (data) => {
+      data.events.push({
+        id: 90,
+        name: 'ToB',
+        note: '',
+        x: 1,
+        y: 1,
+        pages: [
+          {
+            conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false, selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false, switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+            directionFix: false,
+            image: { characterIndex: 0, characterName: '', direction: 2, pattern: 0, tileId: 0 },
+            list: [
+              { code: 201, indent: 0, parameters: [0, b, 3, 3, 2, 0] },
+              { code: 0, indent: 0, parameters: [] },
+            ],
+            moveFrequency: 3,
+            moveRoute: { list: [{ code: 0 }], repeat: true, skippable: false, wait: false },
+            moveSpeed: 3,
+            moveType: 0,
+            priorityType: 1,
+            stepAnime: false,
+            through: false,
+            trigger: 0,
+            walkAnime: true,
+          },
+        ],
+      });
+    });
+    expect(() => deleteMap(session, b)).toThrow(/still referenced.*Map001/);
+
+    // A transfer inside the doomed map itself does not block: it leaves with it.
+    session.updateFile<MapData>('Map001.json', (data) => {
+      data.events = data.events.filter((event) => event?.id !== 90);
+    });
+    session.updateFile<MapData>(`Map00${b}.json`, (data) => {
+      data.events.push({
+        id: 1, name: 'SelfLoop', note: '', x: 1, y: 1,
+        pages: [
+          {
+            conditions: { actorId: 1, actorValid: false, itemId: 1, itemValid: false, selfSwitchCh: 'A', selfSwitchValid: false, switch1Id: 1, switch1Valid: false, switch2Id: 1, switch2Valid: false, variableId: 1, variableValid: false, variableValue: 0 },
+            directionFix: false,
+            image: { characterIndex: 0, characterName: '', direction: 2, pattern: 0, tileId: 0 },
+            list: [
+              { code: 201, indent: 0, parameters: [0, b, 5, 5, 2, 0] },
+              { code: 0, indent: 0, parameters: [] },
+            ],
+            moveFrequency: 3,
+            moveRoute: { list: [{ code: 0 }], repeat: true, skippable: false, wait: false },
+            moveSpeed: 3,
+            moveType: 0,
+            priorityType: 1,
+            stepAnime: false,
+            through: false,
+            trigger: 0,
+            walkAnime: true,
+          },
+        ],
+      });
+    });
+    deleteMap(session, b);
+    expect(session.listFiles()).not.toContain(`Map00${b}.json`);
+  });
+
+  it('throws on a map that does not exist', () => {
+    expect(() => deleteMap(session, 42)).toThrow(/No such map/);
   });
 });

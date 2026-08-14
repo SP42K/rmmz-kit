@@ -17,16 +17,16 @@ import { NAMESPACES_FILE } from './namespaces.js';
  * commits first.
  */
 
-export type DeployTarget = 'web' | 'windows';
+export type DeployTarget = 'web' | 'windows' | 'macos';
 
 export interface DeployOptions {
   /** Where to write the package. Must be outside the project, and empty unless `overwrite`. */
   outDir: string;
-  /** 'web' (default) writes the playable directory; 'windows' wraps it in an NW.js shell. */
+  /** 'web' (default) writes the playable directory; 'windows' and 'macos' wrap it in an NW.js shell. */
   target?: DeployTarget;
   /** Drop img//audio/ files nothing in the project refers to. Default true. */
   excludeUnusedAssets?: boolean;
-  /** An unpacked NW.js distribution (nw.exe + its libraries). Required by target 'windows'. */
+  /** An unpacked NW.js distribution: nw.exe + its libraries for target 'windows', the nwjs.app bundle for target 'macos'. */
   nwPath?: string;
   /** Replace a non-empty outDir instead of refusing. Its previous contents are deleted. */
   overwrite?: boolean;
@@ -78,7 +78,7 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
   }
   await assertEmpty(outDir, options.overwrite ?? false);
 
-  const gameDir = target === 'windows' ? path.join(outDir, 'www') : outDir;
+  let gameDir = target === 'windows' ? path.join(outDir, 'www') : outDir;
   const report: DeployReport = { target, outDir, files: 0, bytes: 0, pruned: [], warnings: [] };
 
   // The reference scan can refuse the whole deploy (an unparseable data file),
@@ -95,6 +95,9 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
 
   if (target === 'windows') {
     await copyNwShell(root, outDir, options.nwPath, report);
+  }
+  if (target === 'macos') {
+    gameDir = await copyMacShell(root, outDir, options.nwPath, report);
   }
 
   await mkdir(gameDir, { recursive: true });
@@ -127,7 +130,70 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
     },
   });
 
+  if (target === 'macos') {
+    // Written after the game copy on purpose: NW.js reads app.nw/package.json
+    // to find the entry point, and a stray package.json inside the project
+    // (some tooling drops one) must not be the one that ships.
+    const title = await readGameTitle(root);
+    await writeFile(
+      path.join(gameDir, 'package.json'),
+      stringifyCompact({
+        name: title || 'game',
+        main: 'index.html',
+        'js-flags': '--expose-gc',
+        window: { title, width: 816, height: 624, icon: 'icon/icon.png' },
+      }),
+      'utf-8'
+    );
+    report.files += 1;
+  }
+
   return report;
+}
+
+/**
+ * The macOS half of the NW.js shell assembly (see copyNwShell): the bundle the
+ * caller supplies is copied whole as `<Title>.app`, and the game lands inside
+ * it at Contents/Resources/app.nw — the location NW.js on macOS loads an
+ * embedded app from, and where the editor's own mac export puts it. Returns
+ * that app.nw path for the main flow to copy the game into.
+ */
+async function copyMacShell(root: string, outDir: string, nwPath: string | undefined, report: DeployReport): Promise<string> {
+  if (!nwPath) {
+    throw new Error(
+      'target "macos" needs nwPath: the path to an unpacked NW.js .app bundle (nwjs.app). ' +
+        'This tool cannot download one — get it from nwjs.io, or deploy target "web" and wrap it yourself.'
+    );
+  }
+  const nwApp = path.resolve(nwPath);
+  const contents = path.join(nwApp, 'Contents');
+  if (!(await stat(contents).then((s) => s.isDirectory(), () => false))) {
+    throw new Error(`nwPath does not look like an unpacked .app bundle (no Contents/ inside): ${nwApp}`);
+  }
+
+  const title = await readGameTitle(root);
+  const appName = `${title.replace(/[\\/:*?"<>|]/g, '_') || 'Game'}.app`;
+  const appDir = path.join(outDir, appName);
+  await mkdir(outDir, { recursive: true });
+  await cp(nwApp, appDir, {
+    recursive: true,
+    filter: (src) => {
+      const stats = statSync(src);
+      if (!stats.isDirectory()) {
+        report.files += 1;
+        report.bytes += stats.size;
+      }
+      return true;
+    },
+  });
+
+  // Copying broke whatever signature the bundle carried, and this tool cannot
+  // re-sign it — that needs the caller's identity and Apple's tooling.
+  report.warnings.push(
+    'The .app bundle is not codesigned — run codesign (and notarization for distribution) before shipping, or Gatekeeper will refuse to open it.'
+  );
+
+  return path.join(appDir, 'Contents', 'Resources', 'app.nw');
 }
 
 async function assertEmpty(outDir: string, overwrite: boolean): Promise<void> {

@@ -276,6 +276,19 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   );
 
   server.registerTool(
+    'delete_map',
+    {
+      description:
+        'Delete a map: removes Map###.json and nulls its MapInfos row, landing with commit() like every other change. ' +
+        'Refused while anything still points at the map — the starting map, MapInfos children, or a transfer from another file — with the blockers named in the error.',
+      inputSchema: {
+        mapId: z.number().int().min(1),
+      },
+    },
+    async ({ mapId }) => json(tools.deleteMapTool(session, mapId))
+  );
+
+  server.registerTool(
     'resize_map',
     {
       description:
@@ -566,12 +579,12 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       description:
         'Export a shippable package: copy the project to outDir, minus the editor project file, save data and (by ' +
         'default) every img//audio/ file nothing in the project refers to. Copies what is on disk, so commit first. ' +
-        'Target "windows" wraps the same bundle in an NW.js shell you supply via nwPath (this tool cannot download one).',
+        'Targets "windows" and "macos" wrap the same bundle in an NW.js shell you supply via nwPath (this tool cannot download one); the macOS .app is not codesigned.',
       inputSchema: {
         outDir: z.string().describe('Where to write the package. Must be outside the project, and empty unless overwrite'),
-        target: z.enum(['web', 'windows']).optional().describe('Defaults to web'),
+        target: z.enum(['web', 'windows', 'macos']).optional().describe('Defaults to web'),
         excludeUnusedAssets: z.boolean().optional().describe('Prune unreferenced img//audio/ files (default true)'),
-        nwPath: z.string().optional().describe('Unpacked NW.js distribution (nw.exe and its libraries), required by target windows'),
+        nwPath: z.string().optional().describe('Unpacked NW.js distribution: nw.exe and its libraries for target windows, the nwjs.app bundle for target macos'),
         overwrite: z.boolean().optional().describe('Delete a non-empty outDir and write a fresh package, instead of refusing'),
       },
     },

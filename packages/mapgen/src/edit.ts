@@ -1,5 +1,5 @@
 import type { MapData, MapInfo, ProjectSession } from '@rmmz-kit/core';
-import { mapFileName } from '@rmmz-kit/core';
+import { RefIndex, mapFileName } from '@rmmz-kit/core';
 import { TILE_ID_MAX, applyAutotiles, tileIndex } from './autotile.js';
 
 /**
@@ -111,6 +111,48 @@ export function createMap(session: ProjectSession, spec: CreateMapSpec): number 
   });
 
   return id;
+}
+
+/**
+ * Deletes `Map###.json` and nulls its MapInfos row — the lifecycle gap plan
+ * §8.1-4 named (blocked on core having a delete verb at all, which it now
+ * does). Refused, rather than cascaded, when anything still points at the map:
+ * the starting map, a MapInfos child, or a transfer from another file
+ * (RefIndex). Cascading would silently rewrite content nobody asked to change;
+ * a caller who wants the children gone can delete them first, bottom-up.
+ * References *from inside* the doomed map to itself don't block — they are
+ * leaving with it.
+ */
+export function deleteMap(session: ProjectSession, mapId: number): void {
+  const file = mapFileName(mapId);
+  if (!session.listFiles().includes(file)) {
+    throw new Error(`No such map: ${file}`);
+  }
+  // The fixture's System.json is minimal and real projects vary — an absent
+  // System.json or startMapId simply can't name this map as the start.
+  if (session.listFiles().includes('System.json')) {
+    const system = session.readFile<{ startMapId?: number }>('System.json');
+    if (system.startMapId === mapId) {
+      throw new Error(`Map ${mapId} is the starting map (System.startMapId) — repoint it before deleting`);
+    }
+  }
+  const infos = session.readFile<Array<MapInfo | null>>('MapInfos.json');
+  const children = infos.filter((info) => info != null && info.parentId === mapId).map((info) => info!.id);
+  if (children.length > 0) {
+    throw new Error(`Map ${mapId} has child maps in MapInfos (${children.join(', ')}) — delete or re-parent them first`);
+  }
+  const references = RefIndex.build(session)
+    .referencesTo('map', mapId)
+    .filter((loc) => loc.file !== file);
+  if (references.length > 0) {
+    const where = references.map((loc) => `${loc.file} > ${loc.path}`);
+    throw new Error(`Map ${mapId} is still referenced: ${where.join('; ')}`);
+  }
+
+  session.updateFile<Array<MapInfo | null>>('MapInfos.json', (data) => {
+    if (data[mapId]) data[mapId] = null;
+  });
+  session.deleteFile(file);
 }
 
 function applyFill(map: MapData, fillTileId: number | undefined): MapData {
