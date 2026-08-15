@@ -542,11 +542,26 @@ Four modules plus one plugin, in the order data flows:
   about a game that never got there); a failed *assertion* does not.
 - `AutoTest.js` (package root, not `src/`) — the injected MZ plugin from §3 M8, exposing
   `window.__AT` with the plan's API (`teleport` / `runEvent` / `setSwitch` / `dumpState` / `seed` /
-  `step` / `waitIdle` / `captureMessages` / `coverage`). It lives at the package root because
+  `step` / `waitIdle` / `captureMessages` / `coverage`), plus `newGame` and `answerChoice` — the two
+  things a driver otherwise cannot reach, since the title screen and the choice window both want
+  input synthesised into a canvas. It lives at the package root because
   `src/autotest.ts` and the built `dist/autotest.js` are both exactly one directory below it, so
   `new URL('../AutoTest.js', import.meta.url)` resolves in both and no build step has to copy an
   asset. `playtest`'s `install-autotest` action stages it plus its `js/plugins.js` entry through
   the same transaction as everything else.
+
+  Two things about it are not style choices but the difference between working
+  and silently doing nothing, both found by driving a licensed install over CDP (report §8 F3/F4):
+  - `step()` and `waitIdle()` force `SceneManager.isGameActive` true for their duration (saved,
+    overridden, restored in `finally`, exactly as `Window_Message.isTriggered` already was). The
+    real one is `document.hasFocus()`, and `updateScene()` skips `_scene.update()` when it is
+    false — so under any driver, in any background tab, every frame was a no-op: the frame counter
+    climbed, the interpreter did not move, and `waitIdle` could only ever return its timeout.
+  - **`waitIdle()` is async** and yields a macrotask per frame, so `DataManager.loadMapData`'s
+    fetch can resolve; a synchronous loop times out on every cross-map transfer. It yields through
+    `MessageChannel`, **not** `setTimeout`, because a background tab clamps timers to about a
+    second and a 600-frame wait would take ten minutes to report a timeout it reached immediately.
+    A test asserts the source contains no `setTimeout(` for this reason.
 
 Coverage (§4.5's `coverage()`) is folded into the scenario report rather than being its own tool,
 and it is counted over *every* command list in the project, not only the ones a scenario touched —
@@ -564,8 +579,18 @@ against stubs in `test/autotest.test.ts`: that catches the failure mode an injec
 has (a typo or renamed member taking the game down on boot) and proves nothing about behaviour
 against a real `Game_Map`.
 
-To close it later, on a real licensed project: `playtest` → `install-autotest` → `commit` → point
-Playwright at the URL and call `window.__AT` over `page.evaluate`. The assertion vocabulary and the
+That last sentence was demonstrated the hard way. The plugin *was* driven against a licensed
+install over CDP, and the stub suite had been green the whole time while two bugs made it
+useless in the only environment it exists for: no `isGameActive` override, and a synchronous
+`waitIdle` (F3/F4 above, both fixed). Neither is reachable from a stub, because a stub has no
+`updateScene` to skip the frame and no fetch to starve. So the browser half of M8 is now
+*demonstrated* rather than only designed — a driver can boot the game, start it, run events and
+read state back — while what is still unverified here is everything a scenario asserts *about a
+real* `Game_Map`, and it stays that way until a licensed project is in CI.
+
+To close the rest, on a real licensed project: `playtest` → `install-autotest` → `commit` → point
+Playwright (or CDP, which is what the verification run used, with no new dependency) at the URL and
+call `window.__AT` over `page.evaluate` — `await` `waitIdle`. The assertion vocabulary and the
 report shape are already the ones `run_scenario` uses, so what is missing is the transport, not the
 test model. Nothing in this package should need to change — which is why this is written here
 rather than left as a TODO in code.
