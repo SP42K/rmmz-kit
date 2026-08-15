@@ -42,6 +42,13 @@ const REQUIRED_SYSTEM_FIELDS: Array<{ path: string; why: string }> = [
   { path: 'advanced.uiAreaWidth', why: 'Scene_Boot.adjustBoxSize lays out every window from it' },
   { path: 'advanced.uiAreaHeight', why: 'Scene_Boot.adjustBoxSize lays out every window from it' },
   { path: 'itemCategories', why: 'Window_ItemCategory.makeCommandList indexes it when the menu opens' },
+  // Worse than advanced.windowOpacity, and found the same way: rmmz_scenes.js
+  // reads `$dataSystem.titleCommandWindow.background` (:579) and `.offsetX` /
+  // `.offsetY` (:590-591) in Scene_Title.createCommandWindow, with no guard on
+  // the object. The title screen is the *first* scene, so a project missing it
+  // never reaches a map at all — and the editor only writes it on first save,
+  // which is exactly the state create_project's output is in.
+  { path: 'titleCommandWindow', why: 'Scene_Title.createCommandWindow reads .background/.offsetX/.offsetY off it before the first scene draws' },
 ];
 
 /** SoundManager.loadSystemSound reads $dataSystem.sounds[0..23]; a short array is a crash on the first cursor move. */

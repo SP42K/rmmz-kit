@@ -228,9 +228,15 @@ callers filter by `severity`/`rule` themselves:
   a player, both found by running this toolchain against a licensed install for the first time. A
   System.json field the engine dereferences with no fallback (`advanced.windowOpacity` is
   `Window_Base.updateBackOpacity`'s first read, so a missing one is a black screen before the first
-  map draws; the editor writes these on first *save*, which is why its own `NewData` lacks them) —
+  map draws; `titleCommandWindow` is worse — `Scene_Title.createCommandWindow` reads `.background`
+  off it, so the *first* scene throws and the game never reaches a map; the editor writes these on
+  first *save*, which is why its own `NewData` lacks them) —
   a short list of *named crashes*, not a completeness check, since core's `SystemData` is
-  deliberately a subset of what MZ writes. And a map on which nothing blocks movement, which is
+  deliberately a subset of what MZ writes. That list and `templates/blank-project/data/System.json`
+  are one fact in two places and are meant to be edited together — the licensed-machine run found
+  `create_project`'s own output crashing in `Scene_Title` *while this rule reported it clean*,
+  because the field was missing from both (report §8 F2/F2b); `templates/README.md` carries the
+  field→call-site table. And a map on which nothing blocks movement, which is
   where a map re-pointed at a stock tileset ends up: `analyzeReachability` is structurally blind to
   it, because an all-passable map is still exactly one walkable region. That one is a *warning* —
   an open field with no walls is legal MZ, and a rule that cried wolf on those would be ignored
@@ -718,6 +724,11 @@ sixth `tsconfig`, `exports` map and CI step would buy nothing.
   list in `types/mz.ts`, and every asset-name field in it — `title1Name`, all 24 `sounds`, every
   vehicle — is **empty rather than a plausible default filename**, because this repo ships no art
   or audio and a plausible name would be a dangling reference the validator is right to report.
+  Reconstructing from `types/mz.ts` is also how the file came to be missing `titleCommandWindow`
+  until a licensed machine booted the result (report §8 F2): the type is a *subset* of what MZ
+  writes, so the template's real job is carrying the fields **outside** it that the engine
+  dereferences with no guard. `templates/README.md` is that list, with a call site per field, and
+  `validate`'s `REQUIRED_SYSTEM_FIELDS` is its executable half — add a field to one and the other.
 
 **Acceptance, honestly split** — the same shape as M6, M8, M9 and M10. The plan asks that the
 deployed web bundle 「可在瀏覽器完整遊玩」 and that the created project 「編輯器可直接開啟」. Neither
