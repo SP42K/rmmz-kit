@@ -45,11 +45,17 @@ export function relativeUnderRoot(root: string, file: string): string {
 
 /**
  * Confirms `dirPath` is an RPG Maker MZ project root by looking for its
- * project marker file case-insensitively. k4zuki's reference implementation
- * hardcoded the lowercase `game.rmmzproject`, which silently fails to find
- * real projects (the editor writes `Game.rmmzproject`) on case-sensitive
- * filesystems. `fs.readdir` + manual compare works on every platform,
- * unlike `fs.access` with a fixed-case path.
+ * project marker file case-insensitively — which case the editor actually
+ * writes was an open question until a licensed install answered it: **MZ 1.9.x
+ * writes lowercase `game.rmmzproject`**. The comment here used to assert
+ * `Game.rmmzproject`, so the reasoning was inverted even though the behaviour
+ * was already right; `PROJECT_FILE_NAME` is only ever compared
+ * case-insensitively, and `deploy`'s exclusion list lowercases before matching.
+ *
+ * Getting the case wrong fails silently in the worst direction on a
+ * case-sensitive filesystem: nothing matches, so `openProject` refuses a real
+ * project and the marker ships inside a build. `fs.readdir` + manual compare
+ * works on every platform, unlike `fs.access` with a fixed-case path.
  */
 export async function findProjectFile(dirPath: string): Promise<string | null> {
   const entries = await readdir(dirPath);

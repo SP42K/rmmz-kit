@@ -49,8 +49,8 @@ busts; 234 (nested tone array), 261, vehicles, 281–285 and 331–333 still rid
 `RawNode`. `import_asset` additionally accepts `js/plugins` (`.js`), so a
 third-party plugin can be imported and enabled by `manage_plugins` in one
 session instead of dead-ending at "copy the file in by hand". §8.1-2 done
-(dangling weapon/armor/skill/state/troop/actor ids off decompiled typed nodes,
-plus actor→class / learnings→skill / enemy-actions→skill database rows — the
+(dangling weapon/armor/skill/state/troop/actor/animation ids off decompiled typed
+nodes, plus actor→class / learnings→skill / enemy-actions→skill database rows — the
 rule's first run caught the fixture's own dangling classIds, now fixed).
 §8.1-4 done (`deleteFile` as core's third verb — unlink + `git add` at commit,
 resurrection at rollback, create-over-delete is a replace — and `delete_map`
@@ -243,6 +243,10 @@ callers filter by `severity`/`rule` themselves:
   (case-sensitive, with a separate warning for a case-only mismatch) under `img/`, `audio/se/`.
   Switches/variables aren't a bounded table in MZ (any numeric id "works"), so a referenced-but-
   unnamed switch/variable is a warning, not the error a truly dangling database id gets.
+  `checkTypedCommandIds` adds the ids that live in Tier 2/3 nodes rather than in `RefIndex`'s code
+  dictionary — weapon/armor/skill/state/troop/actor, and Show Animation's `animationId`, which is
+  `Sprite_Animation` reading `effectName` off `undefined` on the frame the event plays (id 0 is
+  the editor's "None", not a reference).
 - `rules/runtime.ts` — the two ways a project that passes every other rule still fails in front of
   a player, both found by running this toolchain against a licensed install for the first time. A
   System.json field the engine dereferences with no fallback (`advanced.windowOpacity` is
@@ -745,7 +749,13 @@ sixth `tsconfig`, `exports` map and CI step would buy nothing.
   Excluded from every build: `Game.rmmzproject` (a leaked build should not reopen as a project),
   `save/` and `*.rmmzsave` (the developer's playthrough is not the player's), `.git`/`node_modules`.
   A build containing `js/plugins/AutoTest.js` gets a warning — M8's automation hooks let anyone
-  drive the shipped game.
+  drive the shipped game — and so does an NW.js shell that turns out to be the *SDK* flavour
+  (`chromedriver`, `nwjc`, `payload`, `notification_helper`): tens of megabytes, and chromedriver
+  is a remote-control interface sitting beside the game. Warned rather than skipped, because
+  which binaries a distribution needs is the caller's to know. `index.html`'s `<title>` and any
+  `package.json` the *project* carried get the game's own title written into them, since both are
+  what the window shows until `Scene_Boot.updateDocumentTitle` runs, and for anything built from
+  `runtimeFrom` they still name the project it was copied from.
   - **Pruning does not use `RefIndex`, which §3 M11 names.** `RefIndex` indexes numeric *ids*
     (switch 7, Map012) found in event commands; asset references are strings, and most of them live
     outside events entirely — an actor's `faceName`, a tileset's `tilesetNames`, System's title

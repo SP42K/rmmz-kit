@@ -263,11 +263,16 @@ export const SIMPLE_COMMANDS = {
   showPicture: { code: 231, fields: { pictureId: 1, name: '', origin: 0, positionType: 0, x: 0, y: 0, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0 } },
   /**
    * `reserved` is 232's unused second parameter: `command232` never reads it and
-   * the editor writes 0 there (an R1-class assumption, plan §6 — this repo has
-   * no editor-written 232 to copy; a project carrying anything else falls back
-   * to RawNode via matchesSimple, losing nothing). `wait` pauses the event for
+   * the editor writes 0 there. No longer an R1 assumption — **verified against
+   * the ten editor-written 232s in MZ's own `newdata` corpus (report §5), where
+   * `params[1]` is the number 0 in all ten**, along with the 13-element shape
+   * this table encodes. (A project carrying anything else still falls back to
+   * RawNode via matchesSimple, losing nothing.) `wait` pauses the event for
    * `duration` frames. `easingType`: 0 = constant, 1 = slow start, 2 = slow end,
    * 3 = both (`params[12] || 0`, so older 12-element arrays still read as 0).
+   *
+   * 231's shape is verified the same way (8 occurrences). 233 and 234 are not:
+   * neither appears anywhere in either corpus, so those two stay assumptions.
    */
   movePicture: { code: 232, fields: { pictureId: 1, reserved: 0, origin: 0, positionType: 0, x: 0, y: 0, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0, duration: 60, wait: true, easingType: 0 } },
   /** `speed` is degrees per 1/2 frame, positive = counterclockwise; the rotation continues until set back to 0. */

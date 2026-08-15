@@ -300,7 +300,7 @@ function chooseSkill(
 }
 
 /**
- * ponytail: fixed policy, not an AI. Heal below 50%, otherwise hit with the
+ * A fixed policy, not an AI. Heal below 50%, otherwise hit with the
  * most expensive skill that is affordable — good enough to answer "is this
  * fight winnable", and swappable for a policy parameter if a caller ever needs
  * to compare two strategies.

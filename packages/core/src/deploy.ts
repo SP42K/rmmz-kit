@@ -130,6 +130,8 @@ export async function deployProject(rootPath: string, options: DeployOptions): P
     },
   });
 
+  await applyTitle(gameDir, await readGameTitle(root), report);
+
   if (target === 'macos') {
     // Written after the game copy on purpose: NW.js reads app.nw/package.json
     // to find the entry point, and a stray package.json inside the project
@@ -192,6 +194,7 @@ async function copyMacShell(root: string, outDir: string, nwPath: string | undef
   report.warnings.push(
     'The .app bundle is not codesigned — run codesign (and notarization for distribution) before shipping, or Gatekeeper will refuse to open it.'
   );
+  await warnAboutSdkTools(path.join(appDir, 'Contents', 'MacOS'), report);
 
   return path.join(appDir, 'Contents', 'Resources', 'app.nw');
 }
@@ -243,6 +246,7 @@ async function copyNwShell(root: string, outDir: string, nwPath: string | undefi
   await rename(path.join(outDir, 'nw.exe'), path.join(outDir, exeName)).catch(() => {
     report.warnings.push('No nw.exe in nwPath — the shell was copied as-is, so nothing was renamed to the game executable.');
   });
+  await warnAboutSdkTools(outDir, report);
 
   // NW.js reads this, not index.html: without `main` it opens a blank window.
   await writeFile(
@@ -256,6 +260,74 @@ async function copyNwShell(root: string, outDir: string, nwPath: string | undefi
     'utf-8'
   );
   report.files += 1;
+}
+
+/**
+ * Put the game's own title on the two things that show it *before the first
+ * frame*: `index.html`'s `<title>` and, if the project carried one, its
+ * `package.json`'s `window.title`.
+ *
+ * `Scene_Boot.updateDocumentTitle` fixes the tab eventually, so in a browser
+ * this is a flicker. In an NW.js build it is the window title through the whole
+ * splash and load — and for anything built from `create_project --runtimeFrom`,
+ * or from a project copied off another, the name it shows is the *source*
+ * project's ("Project1"). Cheap to correct, and a shipped build is the one
+ * place a player sees it (report §8, deploy notes).
+ */
+async function applyTitle(gameDir: string, title: string, report: DeployReport): Promise<void> {
+  if (!title) return;
+
+  const indexPath = path.join(gameDir, 'index.html');
+  const html = await readFile(indexPath, 'utf-8').catch(() => null);
+  if (html) {
+    // Replacer *function*: a string replacement would read `$&`/`$'` in the
+    // title as match-substitution patterns (same trap as createProject.setTitle).
+    const retitled = html.replace(/<title>[^<]*<\/title>/, () => `<title>${escapeHtml(title)}</title>`);
+    if (retitled !== html) await writeFile(indexPath, retitled, 'utf-8');
+  }
+
+  const pkgPath = path.join(gameDir, 'package.json');
+  const raw = await readFile(pkgPath, 'utf-8').catch(() => null);
+  if (raw === null) return;
+  let pkg: { window?: { title?: string } };
+  try {
+    pkg = JSON.parse(raw) as { window?: { title?: string } };
+  } catch {
+    report.warnings.push(
+      'The project carries a package.json this build could not parse, so its window title may still name the source project.'
+    );
+    return;
+  }
+  if (!pkg.window || pkg.window.title === title) return;
+  pkg.window.title = title;
+  await writeFile(pkgPath, stringifyCompact(pkg), 'utf-8');
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Tools that ship only in NW.js's **SDK** flavour. They are not needed to run a
+ * game, they are tens of megabytes, and `chromedriver.exe` in particular is a
+ * remote-control interface sitting next to the shipped executable — the same
+ * concern as AutoTest.js, which is why this warns rather than stays quiet.
+ *
+ * It warns rather than skipping: which files an NW.js build needs is the
+ * caller's distribution to know, and a deploy that silently drops a binary the
+ * game turns out to load is a worse failure than a fat build.
+ */
+const NW_SDK_TOOLS = ['chromedriver', 'nwjc', 'payload', 'notification_helper'];
+
+async function warnAboutSdkTools(dir: string, report: DeployReport): Promise<void> {
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  // Windows spells them `nwjc.exe`, macOS `nwjc` — one list, matched both ways.
+  const found = entries.filter((name) => NW_SDK_TOOLS.includes(name.toLowerCase().replace(/\.exe$/, '')));
+  if (found.length === 0) return;
+  report.warnings.push(
+    `The NW.js shell is the SDK build: ${found.join(', ')} are in the output. They are not needed to run the game ` +
+      `(chromedriver is a remote-control interface) — use the normal build, or delete them before shipping.`
+  );
 }
 
 async function readGameTitle(root: string): Promise<string> {

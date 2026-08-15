@@ -85,8 +85,8 @@ function checkDanglingIds(session: ProjectSession, findings: Finding[]): void {
 }
 
 /**
- * The §8.1-2 debt: dangling weapon/armor/skill/state/troop ids in command
- * lists. RefIndex only knows Tier 1 codes; these ids live in Tier 2 nodes, so
+ * The §8.1-2 debt: dangling weapon/armor/skill/state/troop/actor/animation ids
+ * in command lists. RefIndex only knows Tier 1 codes; these ids live in Tier 2 nodes, so
  * they are read off the decompiled tree instead of extending RefIndex's code
  * dictionary a second time. A table whose file is absent is skipped rather
  * than treated as empty — same "can't say anything" stance checkAssets takes,
@@ -107,6 +107,7 @@ function checkTypedCommandIds(session: ProjectSession, findings: Finding[]): voi
     ['state', 'States.json'],
     ['troop', 'Troops.json'],
     ['actor', 'Actors.json'],
+    ['animation', 'Animations.json'],
   ] as const) {
     if (files.has(file)) tables.set(kind, idSet(session, file));
   }
@@ -155,6 +156,13 @@ function checkTypedCommandIds(session: ProjectSession, findings: Finding[]): voi
         case 'changeLevel':
         case 'changeParameter':
           reportActor(node, ctx);
+          break;
+        case 'showAnimation':
+          // 0 is the editor's "None", not a reference. A dangling one is
+          // `Sprite_Animation` loading `undefined.effectName` — a crash on the
+          // frame the event plays, which is the same class of bug as every
+          // other id here and was the one Tier 2 node id §8.1-2 left out.
+          if (node.animationId > 0) report('animation', node.animationId, ctx);
           break;
         case 'battle':
           // designation 1 reads the troop id from a variable, 2 from the map's

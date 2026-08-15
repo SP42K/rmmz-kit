@@ -162,6 +162,27 @@ describe('checkReferences', () => {
     expect(dangling('troop', 99)).toBe(true);
   });
 
+  it('flags a dangling Show Animation id, and leaves the editor\'s "None" alone', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      const list = [
+        { code: 212, indent: 0, parameters: [0, 99, false] }, // animation 99 on this event
+        { code: 212, indent: 0, parameters: [-1, 0, false] }, // "None" on the player
+      ];
+      data.events.push(mapEvent(2, 'Sparkle', [page(list)]));
+    });
+
+    const findings = (await checkReferences(session)).filter((f) => f.rule === 'references/dangling-animation');
+
+    // A dangling one is Sprite_Animation reading effectName off undefined — a
+    // crash on the frame the event plays, the same class as every other id here.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('error');
+    expect(findings[0].message).toContain('99');
+  });
+
   it('treats actorId 0 as "entire party", not a dangling actor', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);
