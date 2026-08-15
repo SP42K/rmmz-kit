@@ -918,8 +918,9 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
 ### 8.3 本 repo 內做不完的（缺付費編輯器或真實模型，是前提不是待辦）
 
 **這一輪已經跑過了。** 2026-08，在一台裝有授權 MZ 1.9.x（`H:\Program Files\KADOKAWA\RPGMZ`）
-的 Windows 機器上執行了本節最後一段所說的收尾動作，報告見 `verify-tmp/REPORT.md`
-（該目錄含 KADOKAWA 語料，**不進 repo**）。結果不是「六項全關」，而是三種不同的答案，
+的 Windows 機器上執行了本節最後一段所說的收尾動作，報告見
+`docs/licensed-machine-verification-2026-08.md`（語料本身是 KADOKAWA 著作物，**不進 repo**）。
+結果不是「六項全關」，而是三種不同的答案，
 以及八個真實缺陷——其中一個（F2）是 `create_project` 產出的專案根本開不了機。
 下表是跑完之後的狀態，不是跑之前的預期：
 

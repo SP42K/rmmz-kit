@@ -183,7 +183,9 @@ Several acceptance criteria used to be **unmet by construction rather than by ne
 because they need something this repo cannot contain. Most of those were finally run on a
 machine with a licensed MZ 1.9.x install, which changed the table rather than just ticking
 it — and turned up eight real defects, one of which was that `create_project`'s own output
-could not boot. Each is written up where it lives; the full status is plan §8.3.
+could not boot. The full write-up is
+[`docs/licensed-machine-verification-2026-08.md`](docs/licensed-machine-verification-2026-08.md);
+the per-gap status is plan §8.3.
 
 | Gap | Status |
 |---|---|

@@ -2,3 +2,10 @@ node_modules/
 dist/
 *.log
 debug_log.txt
+
+# Scratch space for a licensed-machine verification run. It holds MZ sample data
+# copied out of a paid install (KADOKAWA's, not ours) alongside the scripts and
+# raw output — none of which may be committed. The write-up that *is* committed
+# is docs/licensed-machine-verification-2026-08.md, and every fixture derived
+# from that run is a hand-written reproduction of a recorded shape.
+verify-tmp/

@@ -67,10 +67,11 @@ bounded, and it rewrote three acceptance claims. The boot crash in `create_proje
 is now a measured 97.4% over 2498 real command lists rather than an assumption), the two bugs
 that made `AutoTest.js` a silent no-op under any driver (F3/F4), and the two causes of the
 battle simulator's divergence from real play (F8 fixed, F7 bounded by `targetPolicy`) are each
-written up in their own section below; plan §8.3 carries the per-gap status table. The corpus
-and the report live in `verify-tmp/`, which is **not** in the repo — MZ's sample content is
-KADOKAWA's, so every fixture added for this work is a hand-written reproduction of a recorded
-*shape*, and re-measuring those percentages needs an installed copy.
+written up in their own section below; plan §8.3 carries the per-gap status table, and the full
+report — every F number the commit messages cite — is
+`docs/licensed-machine-verification-2026-08.md`. The *corpus* is not in the repo and will not
+be: MZ's sample content is KADOKAWA's, so every fixture added for this work is a hand-written
+reproduction of a recorded *shape*, and re-measuring those percentages needs an installed copy.
 
 ## Commands
 
