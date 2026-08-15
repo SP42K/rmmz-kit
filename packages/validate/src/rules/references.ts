@@ -1,21 +1,23 @@
 import path from 'node:path';
 import { readdir } from 'node:fs/promises';
-import type { ProjectSession, RefKind, SystemData, MapData } from '@rmmz-kit/core';
+import type { Actor, Class, Enemy, ProjectSession, RefKind, SystemData, MapData } from '@rmmz-kit/core';
 import { RefIndex, mapFileName } from '@rmmz-kit/core';
 import type { Finding } from '../types.js';
 import type { ListContext } from '../walk.js';
 import { forEachCommandList, tryDecompile, walkNodes } from '../walk.js';
 
 /**
- * Reference integrity (plan §4.4 "參照完整性"). Scoped to what RefIndex and
- * the L2 decompiler actually know about — Tier 1 command codes (§4.3). A
- * dangling weapon/armor/skill/state/troop/class id would need Tier 2/3
- * command support this repo doesn't have yet (see CLAUDE.md), so those
- * tables aren't checked; nothing here pretends otherwise.
+ * Reference integrity (plan §4.4 "參照完整性"). The Tier 1 subset rides
+ * RefIndex; the weapon/armor/skill/state/troop ids §8.1-2 owed are read off
+ * the decompiled typed nodes M7.5 made available (checkTypedCommandIds), and
+ * the class/skill ids that live in database rows rather than command lists
+ * are checked directly (checkDatabaseIds).
  */
 export async function checkReferences(session: ProjectSession): Promise<Finding[]> {
   const findings: Finding[] = [];
   checkDanglingIds(session, findings);
+  checkTypedCommandIds(session, findings);
+  checkDatabaseIds(session, findings);
   checkTransferBounds(session, findings);
   await checkAssets(session, findings);
   return findings;
@@ -82,8 +84,145 @@ function checkDanglingIds(session: ProjectSession, findings: Finding[]): void {
   }
 }
 
-function checkTransferBounds(session: ProjectSession, findings: Finding[]): void {
+/**
+ * The §8.1-2 debt: dangling weapon/armor/skill/state/troop/actor/animation ids
+ * in command lists. RefIndex only knows Tier 1 codes; these ids live in Tier 2 nodes, so
+ * they are read off the decompiled tree instead of extending RefIndex's code
+ * dictionary a second time. A table whose file is absent is skipped rather
+ * than treated as empty — same "can't say anything" stance checkAssets takes,
+ * or a partial project would report every reference as dangling.
+ *
+ * actorId 0 with actorType 0 is MZ's "entire party" (iterateActorId), not a
+ * reference; actorType 1 makes actorId a variable id, which is the unnamed-
+ * variable warning's territory, not this rule's.
+ */
+function checkTypedCommandIds(session: ProjectSession, findings: Finding[]): void {
+  const files = new Set(session.listFiles());
+  const tables = new Map<string, Set<number>>();
+  for (const [kind, file] of [
+    ['item', 'Items.json'],
+    ['weapon', 'Weapons.json'],
+    ['armor', 'Armors.json'],
+    ['skill', 'Skills.json'],
+    ['state', 'States.json'],
+    ['troop', 'Troops.json'],
+    ['actor', 'Actors.json'],
+    ['animation', 'Animations.json'],
+  ] as const) {
+    if (files.has(file)) tables.set(kind, idSet(session, file));
+  }
+
+  function report(kind: string, id: number, ctx: ListContext): void {
+    const table = tables.get(kind);
+    if (!table || table.has(id)) return;
+    findings.push({
+      rule: `references/dangling-${kind}`,
+      severity: 'error',
+      message: `${kind} ${id} is referenced but does not exist`,
+      file: ctx.file,
+      path: ctx.path,
+    });
+  }
+  function reportActor(node: { actorType: number; actorId: number }, ctx: ListContext): void {
+    if (node.actorType === 0 && node.actorId > 0) report('actor', node.actorId, ctx);
+  }
+
   forEachCommandList(session, (ctx) => {
+    const nodes = tryDecompile(ctx.list);
+    if (!nodes) return;
+    walkNodes(nodes, (node) => {
+      switch (node.kind) {
+        case 'gainWeapon':
+          report('weapon', node.weaponId, ctx);
+          break;
+        case 'gainArmor':
+          report('armor', node.armorId, ctx);
+          break;
+        case 'changeParty':
+          report('actor', node.actorId, ctx);
+          break;
+        case 'changeSkill':
+          report('skill', node.skillId, ctx);
+          reportActor(node, ctx);
+          break;
+        case 'changeState':
+          report('state', node.stateId, ctx);
+          reportActor(node, ctx);
+          break;
+        case 'changeHp':
+        case 'changeMp':
+        case 'recoverAll':
+        case 'changeExp':
+        case 'changeLevel':
+        case 'changeParameter':
+          reportActor(node, ctx);
+          break;
+        case 'showAnimation':
+          // 0 is the editor's "None", not a reference. A dangling one is
+          // `Sprite_Animation` loading `undefined.effectName` — a crash on the
+          // frame the event plays, which is the same class of bug as every
+          // other id here and was the one Tier 2 node id §8.1-2 left out.
+          if (node.animationId > 0) report('animation', node.animationId, ctx);
+          break;
+        case 'battle':
+          // designation 1 reads the troop id from a variable, 2 from the map's
+          // encounter list — only the direct form names a troop to check.
+          if (node.designation === 0) report('troop', node.troopId, ctx);
+          break;
+        case 'shop':
+          for (const good of node.goods) {
+            report((['item', 'weapon', 'armor'] as const)[good.type] ?? 'item', good.id, ctx);
+          }
+          break;
+      }
+    });
+  });
+}
+
+/**
+ * The rest of §8.1-2: class and skill ids that never pass through a command
+ * list because they live in database rows — an actor's classId, a class's
+ * learnings, an enemy's action skills. Same absent-file stance as above.
+ */
+function checkDatabaseIds(session: ProjectSession, findings: Finding[]): void {
+  const files = new Set(session.listFiles());
+  function report(rule: string, message: string, file: string, at: string): void {
+    findings.push({ rule, severity: 'error', message, file, path: at });
+  }
+
+  if (files.has('Actors.json') && files.has('Classes.json')) {
+    const classes = idSet(session, 'Classes.json');
+    for (const actor of session.readFile<Array<Actor | null>>('Actors.json')) {
+      if (actor && !classes.has(actor.classId)) {
+        report('references/dangling-class', `class ${actor.classId} is referenced but does not exist`, 'Actors.json', `actor ${actor.id} (${actor.name}) > classId`);
+      }
+    }
+  }
+  if (files.has('Classes.json') && files.has('Skills.json')) {
+    const skills = idSet(session, 'Skills.json');
+    for (const klass of session.readFile<Array<Class | null>>('Classes.json')) {
+      if (!klass) continue;
+      klass.learnings.forEach((learning, i) => {
+        if (!skills.has(learning.skillId)) {
+          report('references/dangling-skill', `skill ${learning.skillId} is referenced but does not exist`, 'Classes.json', `class ${klass.id} (${klass.name}) > learnings[${i}]`);
+        }
+      });
+    }
+  }
+  if (files.has('Enemies.json') && files.has('Skills.json')) {
+    const skills = idSet(session, 'Skills.json');
+    for (const enemy of session.readFile<Array<Enemy | null>>('Enemies.json')) {
+      if (!enemy) continue;
+      enemy.actions.forEach((action, i) => {
+        if (!skills.has(action.skillId)) {
+          report('references/dangling-skill', `skill ${action.skillId} is referenced but does not exist`, 'Enemies.json', `enemy ${enemy.id} (${enemy.name}) > actions[${i}]`);
+        }
+      });
+    }
+  }
+}
+
+function checkTransferBounds(session: ProjectSession, findings: Finding[]): void {  forEachCommandList(session, (ctx) => {
     const nodes = tryDecompile(ctx.list);
     if (!nodes) return;
     walkNodes(nodes, (node) => {

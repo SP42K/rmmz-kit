@@ -93,6 +93,18 @@ export async function createProject(targetPath: string, options: CreateProjectOp
     );
   }
 
+  // Even with a runtime copied in, the template's tileset 1 names no sheets:
+  // `tilesetNames` is nine empty strings, because this repo ships no art and a
+  // plausible filename would be a dangling reference. `paint_tiles` will happily
+  // write tile ids onto a map that then draws nothing, which is a confusing way
+  // to find out (report §8, "other small things"). Whether `runtimeFrom` should
+  // also bring `Tilesets.json` across is a real design decision — it moves the
+  // data/runtime line RUNTIME_SKIP draws — so this warns and leaves it open.
+  warnings.push(
+    'Tilesets.json has one tileset whose sheet names are all empty, so any map drawn with it renders blank. ' +
+      'Point tileset 1 at real sheets (upsert_database) or copy Tilesets.json from the source project before painting.'
+  );
+
   if (options.title) await setTitle(target, options.title);
 
   let commit: string | null = null;

@@ -95,6 +95,12 @@ export interface ScenarioReport {
   battles: BattleCall[];
   /** Commands the event layer does not model, with how often they were hit. A green run with entries here proved less than it looks. */
   unmodeled: Array<{ command: string; count: number }>;
+  /**
+   * Caveats about commands that *did* run — a won battle pays no gold or EXP
+   * here, because the outcome was answered rather than fought. Separate from
+   * `unmodeled` so that counter keeps meaning "something was skipped".
+   */
+  notes: string[];
   state: Record<string, unknown>;
   coverage: CoverageReport;
 }
@@ -150,6 +156,7 @@ export function runScenario(session: ProjectSession, scenario: Scenario): Scenar
     pluginCalls: interpreter.pluginCalls,
     battles: interpreter.battles,
     unmodeled: [...interpreter.unmodeled].map(([command, count]) => ({ command, count })),
+    notes: [...interpreter.notes],
     state: state.snapshot(),
     coverage: interpreter.coverage(),
   };

@@ -276,6 +276,19 @@ function registerTools(server: McpServer, session: ProjectSession): void {
   );
 
   server.registerTool(
+    'delete_map',
+    {
+      description:
+        'Delete a map: removes Map###.json and nulls its MapInfos row, landing with commit() like every other change. ' +
+        'Refused while anything still points at the map — the starting map, MapInfos children, or a transfer from another file — with the blockers named in the error.',
+      inputSchema: {
+        mapId: z.number().int().min(1),
+      },
+    },
+    async ({ mapId }) => json(tools.deleteMapTool(session, mapId))
+  );
+
+  server.registerTool(
     'resize_map',
     {
       description:
@@ -433,9 +446,9 @@ function registerTools(server: McpServer, session: ProjectSession): void {
     'import_asset',
     {
       description:
-        'Copy an image or audio file into the right project folder. Lands with commit() like every other change, and shows up in rmmz://asset-catalog immediately.',
+        'Copy an image, audio, or plugin (.js) file into the right project folder. Lands with commit() like every other change, and shows up in rmmz://asset-catalog immediately. A file imported to js/plugins can be enabled with manage_plugins in the same session.',
       inputSchema: {
-        dir: z.string().describe('Target folder, e.g. img/characters or audio/se'),
+        dir: z.string().describe('Target folder, e.g. img/characters, audio/se, or js/plugins'),
         source: z.string().describe('Path of the file to copy in'),
         name: z.string().optional().describe("Target filename; defaults to the source's own"),
       },
@@ -487,6 +500,12 @@ function registerTools(server: McpServer, session: ProjectSession): void {
         trials: z.number().int().min(1).max(10000).optional(),
         maxTurns: z.number().int().min(1).max(1000).optional(),
         seed: z.number().int().optional(),
+        targetPolicy: z
+          .enum(['random', 'focus'])
+          .optional()
+          .describe(
+            'Who a single-target action hits: "random" (default) spreads damage across living enemies, "focus" always takes the lowest-HP one. MZ leaves this to the player, and the two bracket the real win rate — run both when a matchup looks close'
+          ),
       },
     },
     async (spec) => json(tools.simulateBattle(session, spec))
@@ -566,12 +585,12 @@ function registerTools(server: McpServer, session: ProjectSession): void {
       description:
         'Export a shippable package: copy the project to outDir, minus the editor project file, save data and (by ' +
         'default) every img//audio/ file nothing in the project refers to. Copies what is on disk, so commit first. ' +
-        'Target "windows" wraps the same bundle in an NW.js shell you supply via nwPath (this tool cannot download one).',
+        'Targets "windows" and "macos" wrap the same bundle in an NW.js shell you supply via nwPath (this tool cannot download one); the macOS .app is not codesigned.',
       inputSchema: {
         outDir: z.string().describe('Where to write the package. Must be outside the project, and empty unless overwrite'),
-        target: z.enum(['web', 'windows']).optional().describe('Defaults to web'),
+        target: z.enum(['web', 'windows', 'macos']).optional().describe('Defaults to web'),
         excludeUnusedAssets: z.boolean().optional().describe('Prune unreferenced img//audio/ files (default true)'),
-        nwPath: z.string().optional().describe('Unpacked NW.js distribution (nw.exe and its libraries), required by target windows'),
+        nwPath: z.string().optional().describe('Unpacked NW.js distribution: nw.exe and its libraries for target windows, the nwjs.app bundle for target macos'),
         overwrite: z.boolean().optional().describe('Delete a non-empty outDir and write a fresh package, instead of refusing'),
       },
     },

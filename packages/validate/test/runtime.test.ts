@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { openProject, type MapData, type Tileset } from '@rmmz-kit/core';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createProject, openProject, type MapData, type Tileset } from '@rmmz-kit/core';
 import { checkRuntime } from '../src/rules/runtime.js';
 import { makeTestProject } from './testProject.js';
 
@@ -26,7 +29,7 @@ describe('checkRuntime', () => {
     const session = await openFixture();
     const findings = checkRuntime(session).filter((f) => f.rule === 'runtime/missing-system-field');
 
-    expect(findings.map((f) => f.path)).toEqual(['advanced', 'itemCategories', 'sounds']);
+    expect(findings.map((f) => f.path)).toEqual(['advanced', 'itemCategories', 'titleCommandWindow', 'sounds']);
     expect(findings.every((f) => f.severity === 'error')).toBe(true);
     // The one that cost an afternoon: it is a black screen, not a missing
     // feature, so the message has to say which call site dies.
@@ -39,10 +42,53 @@ describe('checkRuntime', () => {
       ...data,
       advanced: { windowOpacity: 192, screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 },
       itemCategories: [true, true, true, true],
+      titleCommandWindow: { background: 0, offsetX: 0, offsetY: 0 },
       sounds: Array.from({ length: 24 }, () => ({ name: '', pan: 0, pitch: 100, volume: 90 })),
     }));
 
     expect(checkRuntime(session).filter((f) => f.rule === 'runtime/missing-system-field')).toEqual([]);
+  });
+
+  /**
+   * F2 (report §8): `create_project`'s own output crashed in `Scene_Title` on a
+   * licensed machine while this rule reported it clean — the template was
+   * missing the field *and* the rule was not looking for it. Both halves are
+   * pinned here, because fixing either one alone leaves the bug shipping.
+   */
+  describe('the created project boots (F2)', () => {
+    it('a project from the bundled template has every field the rule names', async () => {
+      const parent = await mkdtemp(path.join(tmpdir(), 'rmmz-tmpl-'));
+      cleanups.push(() => rm(parent, { recursive: true, force: true }));
+      const dir = path.join(parent, 'FromTemplate');
+      await createProject(dir, { title: 'From Template', git: false });
+
+      const session = await openProject(dir);
+      expect(checkRuntime(session).filter((f) => f.severity === 'error')).toEqual([]);
+
+      const system = session.readFile<Record<string, unknown>>('System.json');
+      // Not crashes, but the editor writes them and their absence is either a
+      // missing feature (message skip) or a coincidence (turn-based battle).
+      expect(system.titleCommandWindow).toEqual({ background: 0, offsetX: 0, offsetY: 0 });
+      expect(system.optMessageSkip).toBe(true);
+      expect(system.battleSystem).toBe(0);
+      expect(system.optSplashScreen).toBe(false);
+    });
+
+    it('catches a System.json whose titleCommandWindow was removed', async () => {
+      const session = await openFixture();
+      session.updateFile<Record<string, unknown>>('System.json', (data) => ({
+        ...data,
+        advanced: { windowOpacity: 192, screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 },
+        itemCategories: [true, true, true, true],
+        sounds: Array.from({ length: 24 }, () => ({ name: '', pan: 0, pitch: 100, volume: 90 })),
+      }));
+
+      const findings = checkRuntime(session).filter((f) => f.rule === 'runtime/missing-system-field');
+
+      expect(findings.map((f) => f.path)).toEqual(['titleCommandWindow']);
+      expect(findings[0].severity).toBe('error');
+      expect(findings[0].message).toContain('Scene_Title');
+    });
   });
 
   it('flags a map nothing on which blocks the player, and stops once one tile does', async () => {

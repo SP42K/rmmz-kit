@@ -15,6 +15,23 @@ function restore(key: string, value: string | undefined): void {
   else process.env[key] = value;
 }
 
+/**
+ * `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` landed in git 2.32. An older binary
+ * ignores them silently, so the "no git identity" test below does not simulate
+ * a machine with no identity at all — it reads the developer's real one and
+ * fails on a *correct* implementation. That is not hypothetical: it is what the
+ * verification run hit on git 2.28 (report §8 F1), where the only actionable
+ * finding was "upgrade git", which no test result should have to mean.
+ */
+async function gitAtLeast(major: number, minor: number): Promise<boolean> {
+  const { stdout } = await execFileAsync('git', ['--version']).catch(() => ({ stdout: '' }));
+  const [, gotMajor, gotMinor] = /(\d+)\.(\d+)/.exec(stdout) ?? [];
+  if (gotMajor === undefined) return false;
+  return Number(gotMajor) > major || (Number(gotMajor) === major && Number(gotMinor) >= minor);
+}
+
+const hasConfigEnv = await gitAtLeast(2, 32);
+
 describe('createProject', () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -50,7 +67,7 @@ describe('createProject', () => {
     expect(result.warnings.some((w) => w.includes('runtimeFrom'))).toBe(true);
   });
 
-  it('still makes the baseline commit on a machine with no git identity', async () => {
+  it.skipIf(!hasConfigEnv)('still makes the baseline commit on a machine with no git identity', async () => {
     const dir = await target();
     // What a CI runner or a fresh container looks like: no global or system git
     // config, so `git commit` would fail with "please tell me who you are" and

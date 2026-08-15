@@ -5,8 +5,9 @@
  * disagreeing with each other the way hand-maintained indent counters would.
  *
  * Tier 1 and Tier 2 command codes (plan §4.3) get a dedicated, friendly node so
- * the DSL layer and decompiled output stay readable. Everything else (Tier 3, or
- * any code this compiler doesn't know) round-trips through `RawNode`, which
+ * the DSL layer and decompiled output stay readable, as does Tier 3's picture
+ * subset (231/232/233/235 — see the table). Everything else (the rest of Tier 3,
+ * or any code this compiler doesn't know) round-trips through `RawNode`, which
  * carries a single command's code+parameters verbatim — so decompiling an
  * arbitrary existing project can never lose data, even for constructs this
  * compiler has no opinion about.
@@ -81,6 +82,13 @@ export interface CommentNode {
  * still compiles, just via `RawCondition`, which stores the 111 parameter
  * array verbatim — full Conditional Branch support without modeling all ~15
  * condition types up front.
+ *
+ * The editor sometimes ends a then/else body with a `{code:0}` filler at the
+ * body's indent, the same one it writes inside every choice branch (report §5.3
+ * F5, found in MZ's own `samplemaps`/`newdata`). `Game_Interpreter` skips a
+ * code-0 wherever it appears, so decompile consumes one if present and emit
+ * never writes one back: a list like that round-trips to a *semantically*
+ * identical list, not a byte-identical one. See `compile`'s note in emit.ts.
  */
 export interface IfNode {
   kind: 'if';
@@ -243,6 +251,33 @@ export const SIMPLE_COMMANDS = {
   balloon: { code: 213, fields: { characterId: 0, balloonId: 1, wait: false } },
   fadeOut: { code: 221, fields: {} },
   fadeIn: { code: 222, fields: {} },
+  // Tier 3 pictures (plan §8.1-3), the subset whose payload is flat scalars —
+  // the picture system is how a game shows character busts, so it is the first
+  // Tier 3 need to actually arrive. Tint Picture (234) is deliberately absent:
+  // its tone is a nested [r,g,b,gray] array this table cannot hold, so it stays
+  // a RawNode with the rest of Tier 3 (261, vehicles, 281–285, 331–333).
+  //
+  // Shared enums: `origin` 0 = upper-left, 1 = center. `positionType` 0 = x/y
+  // are coordinates, 1 = x/y are variable ids (picturePoint). `blendMode`
+  // 0 = normal, 1 = additive, 2 = multiply, 3 = screen.
+  showPicture: { code: 231, fields: { pictureId: 1, name: '', origin: 0, positionType: 0, x: 0, y: 0, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0 } },
+  /**
+   * `reserved` is 232's unused second parameter: `command232` never reads it and
+   * the editor writes 0 there. No longer an R1 assumption — **verified against
+   * the ten editor-written 232s in MZ's own `newdata` corpus (report §5), where
+   * `params[1]` is the number 0 in all ten**, along with the 13-element shape
+   * this table encodes. (A project carrying anything else still falls back to
+   * RawNode via matchesSimple, losing nothing.) `wait` pauses the event for
+   * `duration` frames. `easingType`: 0 = constant, 1 = slow start, 2 = slow end,
+   * 3 = both (`params[12] || 0`, so older 12-element arrays still read as 0).
+   *
+   * 231's shape is verified the same way (8 occurrences). 233 and 234 are not:
+   * neither appears anywhere in either corpus, so those two stay assumptions.
+   */
+  movePicture: { code: 232, fields: { pictureId: 1, reserved: 0, origin: 0, positionType: 0, x: 0, y: 0, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0, duration: 60, wait: true, easingType: 0 } },
+  /** `speed` is degrees per 1/2 frame, positive = counterclockwise; the rotation continues until set back to 0. */
+  rotatePicture: { code: 233, fields: { pictureId: 1, speed: 0 } },
+  erasePicture: { code: 235, fields: { pictureId: 1 } },
   fadeOutBgm: { code: 242, fields: { duration: 10 } },
   changeHp: { code: 311, fields: { actorType: 0, actorId: 1, operation: 0, operandType: 0, value: 0, allowDeath: false } },
   changeMp: { code: 312, fields: { actorType: 0, actorId: 1, operation: 0, operandType: 0, value: 0 } },

@@ -36,6 +36,44 @@ describe('Tier 2 command shapes', () => {
     ).toEqual([[0, 1, 2, 0, 0, 5]]);
   });
 
+  it('emits picture parameters in the order command231/232/233/235 read (Tier 3 subset)', () => {
+    // showPicture: [pictureId, name, origin, positionType, x, y, scaleX, scaleY, opacity, blendMode].
+    expect(
+      paramsOf({
+        kind: 'showPicture', pictureId: 1, name: 'sakura_smile', origin: 1, positionType: 0,
+        x: 640, y: 360, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0,
+      })
+    ).toEqual([[1, 'sakura_smile', 1, 0, 640, 360, 100, 100, 255, 0]]);
+    // movePicture: the unused slot at index 1 rides along as `reserved`;
+    // duration/wait/easingType are params[10..12], exactly what command232 reads.
+    expect(
+      paramsOf({
+        kind: 'movePicture', pictureId: 1, reserved: 0, origin: 1, positionType: 0,
+        x: 200, y: 360, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0,
+        duration: 30, wait: true, easingType: 3,
+      })
+    ).toEqual([[1, 0, 1, 0, 200, 360, 100, 100, 255, 0, 30, true, 3]]);
+    expect(paramsOf({ kind: 'rotatePicture', pictureId: 1, speed: 5 })).toEqual([[1, 5]]);
+    expect(paramsOf({ kind: 'erasePicture', pictureId: 1 })).toEqual([[1]]);
+  });
+
+  it('decompiles an editor-shaped Show Picture to its typed node', () => {
+    const commands: EventCommand[] = [
+      { code: 231, indent: 0, parameters: [3, 'kyuubi_bust', 1, 0, 960, 540, 100, 100, 255, 0] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    expect(decompile(commands)).toEqual([
+      {
+        kind: 'showPicture', pictureId: 3, name: 'kyuubi_bust', origin: 1, positionType: 0,
+        x: 960, y: 540, scaleX: 100, scaleY: 100, opacity: 255, blendMode: 0,
+      },
+    ]);
+  });
+
+  // One mirror row per *step*, none for the ROUTE_END the route list itself
+  // ends with — that is what the editor writes (report §5.4 F6), and the extra
+  // row this used to emit pushed every following command down a line in the
+  // editor's event list.
   it('mirrors a movement route into 505 rows and terminates it with ROUTE_END', () => {
     const commands = compile([
       {
@@ -68,7 +106,6 @@ describe('Tier 2 command shapes', () => {
       },
       { code: 505, indent: 0, parameters: [{ code: 2, indent: null }] },
       { code: 505, indent: 0, parameters: [{ code: 45, indent: null, parameters: ['this.setOpacity(0)'] }] },
-      { code: 505, indent: 0, parameters: [{ code: 0, indent: null }] },
     ]);
   });
 

@@ -15,10 +15,22 @@ import { autoTestSource } from '../src/autotest.js';
  * keep correct, and it still would not be MZ.
  */
 function loadPlugin() {
-  const calls: { updateMain: number; setup: unknown[][]; transfers: unknown[][] } = {
+  const calls: {
+    updateMain: number;
+    setup: unknown[][];
+    transfers: unknown[][];
+    channels: number;
+    newGames: number;
+    goto: unknown[];
+    chosen: number[];
+  } = {
     updateMain: 0,
     setup: [],
     transfers: [],
+    channels: 0,
+    newGames: 0,
+    goto: [],
+    chosen: [],
   };
 
   const switches = { _data: [] as boolean[], setValue(id: number, v: boolean) { this._data[id] = v; }, value(id: number) { return !!this._data[id]; } };
@@ -29,16 +41,37 @@ function loadPlugin() {
     value(key: unknown[]) { return !!this._data[String(key)]; },
   };
 
-  const state = { eventRunning: false, messageBusy: false };
+  const state = { eventRunning: false, messageBusy: false, choice: false, gameActive: false };
+
+  // The macrotask AutoTest.js yields between frames. Counting channels is how
+  // the test sees that waitIdle yields *per frame*; hopping through the host's
+  // setImmediate keeps the resolution a real task rather than a microtask, so
+  // an await that never yielded would hang instead of silently passing.
+  function FakeMessageChannel(this: Record<string, unknown>) {
+    calls.channels++;
+    const port1: { onmessage: null | (() => void); close: () => void } = { onmessage: null, close: () => {} };
+    this.port1 = port1;
+    this.port2 = {
+      close: () => {},
+      postMessage: () => setImmediate(() => port1.onmessage?.()),
+    };
+  }
 
   const context: Record<string, unknown> = {
+    MessageChannel: FakeMessageChannel,
+    Scene_Map: function Scene_Map() {},
+    DataManager: { setupNewGame: () => { calls.newGames++; } },
     Game_Message: function () {} as unknown as { prototype: Record<string, unknown> },
     Game_Interpreter: function () {} as unknown as { prototype: Record<string, unknown> },
     Window_Message: function () {} as unknown as { prototype: Record<string, unknown> },
     $gameSwitches: switches,
     $gameVariables: variables,
     $gameSelfSwitches: selfSwitches,
-    $gameMessage: { isBusy: () => state.messageBusy },
+    $gameMessage: {
+      isBusy: () => state.messageBusy,
+      isChoice: () => state.choice,
+      onChoice: (index: number) => calls.chosen.push(index),
+    },
     $gameParty: {
       gold: () => 42,
       items: () => [{ id: 1 }],
@@ -62,7 +95,14 @@ function loadPlugin() {
     },
     $dataItems: [null, { id: 1 }],
     $dataCommonEvents: [null, { id: 1, list: ['common list'] }],
-    SceneManager: { updateMain: () => { calls.updateMain++; } },
+    SceneManager: {
+      updateMain: () => { calls.updateMain++; },
+      // The real one is `window.top.document.hasFocus()`, which is false for
+      // every automation driver — see report §8 F3.
+      isGameActive: () => state.gameActive,
+      goto: (scene: unknown) => calls.goto.push(scene),
+      _scene: null as unknown,
+    },
     Graphics: { frameCount: 123 },
   };
   (context.Game_Message as { prototype: Record<string, unknown> }).prototype = {
@@ -96,6 +136,8 @@ describe('AutoTest.js', () => {
       'seed',
       'step',
       'waitIdle',
+      'newGame',
+      'answerChoice',
       'captureMessages',
       'coverage',
     ]) {
@@ -165,27 +207,134 @@ describe('AutoTest.js', () => {
     expect(first[0]).not.toBe(first[1]);
   });
 
-  it('steps logical frames and stops waiting once the game is idle', () => {
+  it('steps logical frames and stops waiting once the game is idle', async () => {
     const { at, calls, state } = loadPlugin();
     at.step(3);
     expect(calls.updateMain).toBe(3);
 
     state.eventRunning = true;
-    expect(at.waitIdle(5)).toBe(false);
+    expect(await at.waitIdle(5)).toBe(false);
     expect(calls.updateMain).toBe(8);
 
     state.eventRunning = false;
-    expect(at.waitIdle(5)).toBe(true);
+    expect(await at.waitIdle(5)).toBe(true);
     expect(calls.updateMain).toBe(8);
   });
 
-  it('restores Window_Message.isTriggered after auto-advancing messages', () => {
+  it('restores Window_Message.isTriggered after auto-advancing messages', async () => {
     const { at, context, state } = loadPlugin();
     const prototype = (context.Window_Message as { prototype: { isTriggered: () => boolean } }).prototype;
     const before = prototype.isTriggered;
     state.eventRunning = true;
-    at.waitIdle(2);
+    await at.waitIdle(2);
     expect(prototype.isTriggered).toBe(before);
+  });
+
+  /**
+   * F3/F4 (report §8). Against a real licensed runtime the plugin looked like
+   * it worked — frames advanced, no error — and did nothing: `updateScene`
+   * skips `_scene.update()` while `isGameActive()` is false, which it always is
+   * for a driver, and the synchronous loop never let `loadMapData`'s fetch
+   * resolve. Both halves are pinned here because both are invisible except
+   * against an engine this repo cannot run.
+   */
+  describe('works in an environment with no focus and no free event loop', () => {
+    it('forces isGameActive true for the duration of step(), then restores it', () => {
+      const { at, context, calls } = loadPlugin();
+      const manager = context.SceneManager as { isGameActive: () => boolean; updateMain: () => void };
+      const before = manager.isGameActive;
+      let activeDuringFrame: boolean | null = null;
+      manager.updateMain = () => {
+        calls.updateMain++;
+        activeDuringFrame = manager.isGameActive();
+      };
+
+      at.step(1);
+
+      // Without this the frame is a no-op: the counter climbs, the interpreter
+      // does not move, and every assertion downstream reads a stale game.
+      expect(activeDuringFrame).toBe(true);
+      expect(manager.isGameActive).toBe(before);
+      expect(manager.isGameActive()).toBe(false);
+    });
+
+    it('forces it true across waitIdle\'s awaits, then restores it', async () => {
+      const { at, context, calls, state } = loadPlugin();
+      const manager = context.SceneManager as { isGameActive: () => boolean; updateMain: () => void };
+      const before = manager.isGameActive;
+      const seen: boolean[] = [];
+      manager.updateMain = () => {
+        calls.updateMain++;
+        seen.push(manager.isGameActive());
+      };
+      state.eventRunning = true;
+
+      await at.waitIdle(3);
+
+      expect(seen).toEqual([true, true, true]);
+      expect(manager.isGameActive).toBe(before);
+    });
+
+    it('yields one macrotask per frame, through MessageChannel', async () => {
+      const { at, calls, state } = loadPlugin();
+      state.eventRunning = true;
+
+      const promise = at.waitIdle(4);
+      // Synchronous up to the first await only: proof the loop actually
+      // suspends instead of burning all four frames in one turn.
+      expect(calls.updateMain).toBe(1);
+      expect(await promise).toBe(false);
+
+      expect(calls.updateMain).toBe(4);
+      expect(calls.channels).toBe(4);
+    });
+
+    it('never yields through setTimeout, which a background tab clamps to ~1s', () => {
+      expect(autoTestSource()).toMatch(/new MessageChannel\(\)/);
+      // A *call*, not the word: the comment above nextMacrotask names the trap.
+      expect(autoTestSource()).not.toMatch(/setTimeout\s*\(/);
+    });
+  });
+
+  describe('the two things a driver otherwise cannot reach', () => {
+    it('starts a new game the way Scene_Title.commandNewGame does', () => {
+      const { at, calls, context } = loadPlugin();
+
+      at.newGame();
+
+      expect(calls.newGames).toBe(1);
+      expect(calls.goto).toEqual([context.Scene_Map]);
+    });
+
+    it('answers a waiting Show Choices through the choice window when there is one', () => {
+      const { at, context, state, calls } = loadPlugin();
+      const selected: number[] = [];
+      let okCalls = 0;
+      (context.SceneManager as { _scene: unknown })._scene = {
+        _choiceListWindow: { select: (i: number) => selected.push(i), processOk: () => { okCalls++; } },
+      };
+
+      expect(() => at.answerChoice(0)).toThrow(/no Show Choices/);
+
+      state.choice = true;
+      at.answerChoice(1);
+
+      // Through the window, because that is what closes the message the way a
+      // player's Enter closes it — onChoice alone picks the branch and leaves
+      // the window open.
+      expect(selected).toEqual([1]);
+      expect(okCalls).toBe(1);
+      expect(calls.chosen).toEqual([]);
+    });
+
+    it('falls back to Game_Message.onChoice when the scene has no choice window', () => {
+      const { at, state, calls } = loadPlugin();
+      state.choice = true;
+
+      at.answerChoice(2);
+
+      expect(calls.chosen).toEqual([2]);
+    });
   });
 
   it('dumps the full state rather than a whitelist', () => {

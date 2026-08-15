@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile } from './io/atomicWrite.js';
 import { parseJson, stringifyCompact } from './io/format.js';
@@ -30,6 +30,14 @@ export interface ValidationReport {
 export class ProjectSession {
   private lockSnapshot: EditorLockSnapshot;
   private readonly git: GitRepo;
+  /**
+   * Data files marked for deletion — the missing third verb next to createFile
+   * and updateFile (plan §8.1-4: map deletion was the lifecycle's only gap,
+   * and it was blocked here, not in mapgen). Original text is kept so
+   * rollback() can resurrect the parsed file; commit() unlinks and lets
+   * `git add` stage the removal.
+   */
+  private readonly deletedFiles = new Set<string>();
 
   private constructor(
     readonly rootPath: string,
@@ -105,8 +113,41 @@ export class ProjectSession {
       throw new Error(`Data file already exists: ${name}`);
     }
     this.files.set(name, data);
-    this.created.add(name);
+    // Creating over a pending deletion is a replace: the file exists on disk,
+    // so it is a plain dirty write, not a `created` one — the created-file
+    // validate check ("already exists on disk") would otherwise refuse it.
+    if (this.deletedFiles.has(name)) {
+      this.deletedFiles.delete(name);
+    } else {
+      this.created.add(name);
+    }
     this.dirty.add(name);
+  }
+
+  /**
+   * Mark a data file for deletion. Like every other mutation it is invisible
+   * on disk until commit() and undone whole by rollback(). Deleting a file
+   * created in this session simply forgets it — nothing was ever on disk.
+   * From this call on the file is gone from listFiles()/readFile(), so every
+   * rule and tool downstream already treats it as absent.
+   */
+  deleteFile(name: string): void {
+    if (!this.files.has(name)) {
+      throw new Error(`Unknown data file: ${name}`);
+    }
+    this.files.delete(name);
+    if (this.created.has(name)) {
+      this.created.delete(name);
+      this.dirty.delete(name);
+      return;
+    }
+    this.dirty.delete(name);
+    this.deletedFiles.add(name);
+  }
+
+  /** Data files marked for deletion — what commit() would unlink. */
+  deletedDataFiles(): string[] {
+    return [...this.deletedFiles];
   }
 
   /**
@@ -230,9 +271,15 @@ export class ProjectSession {
         this.files.set(name, parseJson(this.originalText.get(name)!));
       }
     }
+    for (const name of this.deletedFiles) {
+      // Nothing touched disk, so undoing a deletion is re-parsing the text the
+      // session read at open() — the same resurrection dirty files get above.
+      this.files.set(name, parseJson(this.originalText.get(name)!));
+    }
     this.dirty.clear();
     this.created.clear();
     this.rawWrites.clear();
+    this.deletedFiles.clear();
   }
 
   /**
@@ -246,12 +293,13 @@ export class ProjectSession {
     if (report.errors.length > 0) {
       throw new Error(`Cannot commit, validation failed:\n${report.errors.map((e) => `  - ${e}`).join('\n')}`);
     }
-    if (this.dirty.size === 0 && this.rawWrites.size === 0) {
+    if (this.dirty.size === 0 && this.rawWrites.size === 0 && this.deletedFiles.size === 0) {
       return null;
     }
 
     const written = new Map<string, string>();
     const writtenRaw: string[] = [];
+    const removed: string[] = [];
     try {
       for (const name of this.dirty) {
         const text = stringifyCompact(this.files.get(name));
@@ -271,10 +319,26 @@ export class ProjectSession {
         writtenRaw.push(rel);
       }
 
+      // Deletions go last, mirroring the write order's reasoning inverted: a
+      // half-committed transaction with the file still present is stale data,
+      // one with the file gone but a row still referencing it is a broken
+      // project — and validate() ran against the post-delete listFiles(), so
+      // the rows are already consistent with the file being gone.
+      for (const name of this.deletedFiles) {
+        // ENOENT means someone beat us to it; the end state is the one asked for.
+        await unlink(path.join(this.dataDir, name)).catch((err: NodeJS.ErrnoException) => {
+          if (err.code !== 'ENOENT') throw err;
+        });
+        removed.push(name);
+      }
+
       if (await this.git.isRepo()) {
+        // `git add` on a deleted path stages the removal, so one call covers
+        // writes and deletions alike.
         await this.git.add([
           ...[...written.keys()].map((name) => path.join(this.dataDir, name)),
           ...writtenRaw.map((rel) => path.join(this.rootPath, rel)),
+          ...removed.map((name) => path.join(this.dataDir, name)),
         ]);
         return await this.git.commit(message);
       }
@@ -290,6 +354,10 @@ export class ProjectSession {
         this.created.delete(name);
       }
       for (const rel of writtenRaw) this.rawWrites.delete(rel);
+      for (const name of removed) {
+        this.originalText.delete(name);
+        this.deletedFiles.delete(name);
+      }
       this.lockSnapshot = await EditorLockSnapshot.capture(
         this.listFiles().map((name) => path.join(this.dataDir, name))
       );

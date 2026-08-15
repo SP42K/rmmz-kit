@@ -42,7 +42,36 @@ closing M6.5 gap #2 — see below). The nine gaps from the first end-to-end run
 against a **real licensed MZ install** are closed (a boot crash, unreadable and
 walk-through-able maps, no way to name a tile id, invisible NPCs, duplicated
 givers, numbered namespace members, no map-level tool, no placement query) —
-each one is written up where it landed, below. L2 Tier 3 not started.
+each one is written up where it landed, below. L2 Tier 3: the picture subset
+(231/232/233/235) is delivered as `SIMPLE_COMMANDS` entries — the first
+need-driven slice of §8.1-3, since pictures are how a game shows character
+busts; 234 (nested tone array), 261, vehicles, 281–285 and 331–333 still ride
+`RawNode`. `import_asset` additionally accepts `js/plugins` (`.js`), so a
+third-party plugin can be imported and enabled by `manage_plugins` in one
+session instead of dead-ending at "copy the file in by hand". §8.1-2 done
+(dangling weapon/armor/skill/state/troop/actor/animation ids off decompiled typed
+nodes, plus actor→class / learnings→skill / enemy-actions→skill database rows — the
+rule's first run caught the fixture's own dangling classIds, now fixed).
+§8.1-4 done (`deleteFile` as core's third verb — unlink + `git add` at commit,
+resurrection at rollback, create-over-delete is a replace — and `delete_map`
+on top of it, refused while the starting map, a MapInfos child, or another
+file's transfer still points at the map). `deploy` grew `target: "macos"`
+(the game lands in `<Title>.app/Contents/Resources/app.nw`; the bundle is not
+codesigned and the report says so). The §8.1-1 tail (expression language,
+`!`/`&&`) remains not started.
+
+**The plan's §8.3 "needs a licensed machine" batch has been run** (2026-08, MZ 1.9.x on
+Windows). It did not simply tick boxes: it produced eight defects, all now fixed or explicitly
+bounded, and it rewrote three acceptance claims. The boot crash in `create_project`'s own output
+(F2), the two shapes the editor writes that `decompile`/`emit` got wrong (F5/F6 — byte-identity
+is now a measured 97.4% over 2498 real command lists rather than an assumption), the two bugs
+that made `AutoTest.js` a silent no-op under any driver (F3/F4), and the two causes of the
+battle simulator's divergence from real play (F8 fixed, F7 bounded by `targetPolicy`) are each
+written up in their own section below; plan §8.3 carries the per-gap status table, and the full
+report — every F number the commit messages cite — is
+`docs/licensed-machine-verification-2026-08.md`. The *corpus* is not in the repo and will not
+be: MZ's sample content is KADOKAWA's, so every fixture added for this work is a hand-written
+reproduction of a recorded *shape*, and re-measuring those percentages needs an installed copy.
 
 ## Commands
 
@@ -184,13 +213,32 @@ see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
 - Every Show Choices branch (402/403 body) always emits a trailing
   `{code:0}` filler at the branch's indent — inferred from
   `fixtures/minimal-project`, the only ground truth available; decompile
-  treats the filler as optional (present or not) rather than required.
+  treats the filler as optional (present or not) rather than required. The
+  licensed-machine run found the editor writing that same filler at the end of
+  **Conditional Branch** bodies too (report §5.3 F5), where decompile threw and
+  took down `rmmz://map/{id}` for the whole map. It is now consumed wherever a
+  block parser opens a body — 111/411, 112, and a RawNode's absorbed body — and
+  still written back only for 402/403, since `Game_Interpreter` skips a code-0
+  wherever it appears.
 - `emit.ts` always writes the full canonical parameter array for a command
   (e.g. Show Choices' 5-element `[choices, cancelType, defaultType,
   positionType, background]`), even when decompiling data that had a
   shorter/older array. Round-tripping through this compiler is therefore
   idempotent (`decompile(compile(x))` is stable) but not always byte-identical
   to arbitrary pre-existing data — see `decompile.test.ts`'s fixture test.
+
+Both of those were finally measured rather than assumed: running the compiler
+over MZ's own `samplemaps` + `newdata` on a licensed machine (2498 real command
+lists, report §5) put byte-identity at **97.4%**, and named every difference.
+68 were the 205 mirror count — the editor writes one 505 per route *step* and
+none for the trailing ROUTE_END, where this wrote one for the terminator too
+and so pushed every following command a row down in the editor's event list
+(report §5.4 F6, fixed). 5 were the Conditional Branch filler above, which is
+now a deliberate normalization: those lists come back semantically identical,
+not byte-identical. The rest is the canonical-parameter-array rule. The corpus
+itself is KADOKAWA's and is **not** in this repo — `test/editorShapes.test.ts`
+is a hand-written minimal reproduction of each shape, so re-measuring the
+percentage needs an installed copy.
 
 ### L4 validator (`packages/validate`)
 
@@ -199,7 +247,13 @@ returns a flat `Finding[]` (`rule`, `severity`, `message`, `file`, `path?`) — 
 callers filter by `severity`/`rule` themselves:
 - `rules/structure.ts` — reuses `@rmmz-kit/compiler`'s `decompile()` as the structural check
   (it already throws on every 111/412, 112/413, 102/402/403/404, 301/604 pairing or indent
-  mistake) instead of re-deriving bracket-matching; adds only what `decompile()` deliberately
+  mistake) instead of re-deriving bracket-matching. **That reuse is a coupling in both
+  directions**: anything `decompile()` learns to tolerate stops being reported here, so a change
+  to it is a change to this rule and belongs in the same review. The one made so far is the
+  branch-body `{code:0}` filler (F5) — see `consumeOptionalFiller`'s doc comment for why giving
+  up that finding costs nothing (`Game_Interpreter` steps straight past a code 0, so the rule was
+  naming something that cannot misbehave, and was firing on 5 of 2498 real lists) and for what is
+  still caught. It adds only what `decompile()` deliberately
   doesn't catch (an orphan continuation — 401/408, and since M7.5 505/605/655 — and a 113 Break
   Loop outside any 112 Loop).
 - `rules/references.ts` — dangling item/actor/commonEvent/map ids (via `RefIndex.entries()`,
@@ -208,13 +262,23 @@ callers filter by `severity`/`rule` themselves:
   (case-sensitive, with a separate warning for a case-only mismatch) under `img/`, `audio/se/`.
   Switches/variables aren't a bounded table in MZ (any numeric id "works"), so a referenced-but-
   unnamed switch/variable is a warning, not the error a truly dangling database id gets.
+  `checkTypedCommandIds` adds the ids that live in Tier 2/3 nodes rather than in `RefIndex`'s code
+  dictionary — weapon/armor/skill/state/troop/actor, and Show Animation's `animationId`, which is
+  `Sprite_Animation` reading `effectName` off `undefined` on the frame the event plays (id 0 is
+  the editor's "None", not a reference).
 - `rules/runtime.ts` — the two ways a project that passes every other rule still fails in front of
   a player, both found by running this toolchain against a licensed install for the first time. A
   System.json field the engine dereferences with no fallback (`advanced.windowOpacity` is
   `Window_Base.updateBackOpacity`'s first read, so a missing one is a black screen before the first
-  map draws; the editor writes these on first *save*, which is why its own `NewData` lacks them) —
+  map draws; `titleCommandWindow` is worse — `Scene_Title.createCommandWindow` reads `.background`
+  off it, so the *first* scene throws and the game never reaches a map; the editor writes these on
+  first *save*, which is why its own `NewData` lacks them) —
   a short list of *named crashes*, not a completeness check, since core's `SystemData` is
-  deliberately a subset of what MZ writes. And a map on which nothing blocks movement, which is
+  deliberately a subset of what MZ writes. That list and `templates/blank-project/data/System.json`
+  are one fact in two places and are meant to be edited together — the licensed-machine run found
+  `create_project`'s own output crashing in `Scene_Title` *while this rule reported it clean*,
+  because the field was missing from both (report §8 F2/F2b); `templates/README.md` carries the
+  field→call-site table. And a map on which nothing blocks movement, which is
   where a map re-pointed at a stock tileset ends up: `analyzeReachability` is structurally blind to
   it, because an all-passable map is still exactly one walkable region. That one is a *warning* —
   an open field with no walls is legal MZ, and a rule that cried wolf on those would be ignored
@@ -354,35 +418,42 @@ Three files, in the order data flows through them:
 - `simulate.ts` — the turn loop (turn-based, never TPB), the trial runner and the aggregation.
 
 `battler.ts` and `action.ts` each carry an explicit list of what is *not* modeled (buffs/debuffs,
-TP, extra action times, counter/reflect/substitute, dual wield) rather than approximating it
-silently. The one thing that is a judgement call and not an engine port is action *selection* —
+TP, extra **action** times, counter/reflect/substitute, dual wield) rather than approximating it
+silently. That list used to say "extra action times (trait 34)", conflating two different
+mechanics under one line — and the one it named the wrong code for turned out to matter: extra
+**attack** times (`TRAIT_ATTACK_TIMES`, 34, `Game_Action.numRepeats` adding
+`subject.attackTimesAdd()` to a normal attack) is carried by MZ's own stock Cestus, so a party
+equipped from the default database swings twice and this simulator had it swinging once. That
+was most of the worst divergence a real playtest found (8.10 simulated turns against 5.47 played,
+report §6/§8 F8) and is now modeled. Extra *action* times is trait 61, is rare, and is still not.
+The one thing that is a judgement call and not an engine port is action *selection* —
 MZ leaves that to the player — so the chosen policy is heuristic and is echoed back in the
 report's `policy` field, because a party that never heals loses fights a real player wins.
 
-**M6's acceptance criterion is not met, and cannot be met from inside this repo.** The plan (§3 M6)
-asks for "對 MZ 內建範例的幾組敵我配置，模擬勝率與實際遊戲測試誤差 < 10%", which needs three
-things this repo does not have and cannot legally or practically acquire on its own:
+**M6's acceptance criterion has now been measured, and it is met at the ends and missed in the
+middle.** The plan (§3 M6) asks for "對 MZ 內建範例的幾組敵我配置，模擬勝率與實際遊戲測試誤差
+< 10%". That comparison was finally run — a licensed MZ install supplied both halves it needs (the
+sample project's real database, and a real playtest of the same six matchups) — and the result
+splits cleanly:
 
-1. **MZ's sample project database.** The built-in Actors/Classes/Enemies/Troops/Skills rows are
-   shipped with the (paid, licensed) editor — `fixtures/minimal-project` is a hand-written minimal
-   project, so its numbers are plausible, not RPG Maker's. Simulating a fixture matchup and
-   comparing it to itself measures nothing.
-2. **A real playtest to compare against.** The right-hand side of "誤差 < 10%" is a human (or M8's
-   headless runtime, which is M8) playing those same matchups enough times for a win rate to mean
-   something. There is no runtime here yet — that is precisely what M6 was scheduled *before*.
-3. **Agreement on the parts MZ leaves to the player.** A win rate is a function of action policy as
-   much as of damage math; a party that never heals loses fights a human wins. `BattleReport.policy`
-   states the policy this simulator used, so a future comparison is at least apples-to-apples.
+- **Lopsided matchups: within budget.** Where a side wins nearly always or nearly never, simulated
+  and played win rates agree to a few points. The ported arithmetic is right; that is what
+  `test/action.test.ts` pins from the other direction with exact hand-computed damage (formula
+  evaluation, element rate, guard division, the variance band's bounds, and MZ's own "broken
+  formula evaluates to 0" contract).
+- **Close matchups: 3 of 6 outside 10%.** The divergence is not in the damage math. It came from
+  exactly two things, both now addressed: `attackTimesAdd` was not counted, so a party wielding
+  MZ's own Cestus swung once instead of twice (F8 — **fixed**, see above); and target selection is
+  uniform random here while a real player focuses fire, worth +15.3pp on the evenly-matched pair
+  (F7 — *not* modeled, but no longer hidden: `targetPolicy: 'random' | 'focus'` brackets it and
+  `BattleReport.policy` names which one produced the numbers).
 
-What is verified instead is the half that is checkable without a game, and it is the half a 10%
-drift would come from: exact hand-computed damage for known params — formula evaluation, element
-rate, guard division, the variance band's bounds — plus MZ's own "broken formula evaluates to 0"
-contract (`test/action.test.ts`). If the ported arithmetic is right, the remaining error is policy
-and unmodeled features, both listed above and in `battler.ts`.
-
-To close it later: point `simulate()` at a real MZ project (it takes any `ProjectSession`), run the
-same matchups in M8's headless runtime once that exists, and compare win rates. No change to this
-package should be needed — which is why it is listed here rather than left as a TODO in code.
+So the honest statement of where this stands is: the engine port is verified against a real game,
+the two known policy gaps are named in the report rather than buried, and what remains unclosed is
+`Game_Action.evaluate()` — modelling every skill's value to every battler, which is L5-scale work
+and deliberately not attempted. One methodology note worth keeping, because it cost a round of
+bad data: `changeLevel` does not unlearn skills, so a "level 1" party recreated by demoting a
+level 2 one keeps its level 2 skills and wins fights it should lose. Recreate the actors instead.
 
 The fixture grew for this milestone: `fixtures/minimal-project/data/` gained Classes, Enemies,
 Troops, States, Weapons and Armors (a real MZ project always has them), and Skills 1/2 became
@@ -493,7 +564,11 @@ Four modules plus one plugin, in the order data flows:
   `unmodeled` proved less than it looks** — that counter is the difference between a fallback and
   a fake. Plugin commands are recorded, not run, so a project whose rewards go through a plugin
   can still be asserted on. A runaway loop hits a command budget and throws, which is the one
-  softlock class this layer genuinely catches.
+  softlock class this layer genuinely catches. One thing that *is* modelled and still has an
+  unmodelled side effect gets its own channel: a won Battle Processing pays no gold, EXP, drops
+  or level-up here, because the outcome was answered rather than fought. That lands in `notes`,
+  not `unmodeled` — `unmodeled` has to keep meaning "a command was skipped", and a generated
+  game with one boss fight would trip it every run and teach a reader to ignore it.
 - `scenario.ts` — the agent-facing surface: a scenario is *data* (steps + assertions), and the
   report says which check failed with expected/actual, what was shown, the final state and the
   coverage. That shape is chosen for M9's repair loop, which needs a failure trajectory rather
@@ -501,11 +576,26 @@ Four modules plus one plugin, in the order data flows:
   about a game that never got there); a failed *assertion* does not.
 - `AutoTest.js` (package root, not `src/`) — the injected MZ plugin from §3 M8, exposing
   `window.__AT` with the plan's API (`teleport` / `runEvent` / `setSwitch` / `dumpState` / `seed` /
-  `step` / `waitIdle` / `captureMessages` / `coverage`). It lives at the package root because
+  `step` / `waitIdle` / `captureMessages` / `coverage`), plus `newGame` and `answerChoice` — the two
+  things a driver otherwise cannot reach, since the title screen and the choice window both want
+  input synthesised into a canvas. It lives at the package root because
   `src/autotest.ts` and the built `dist/autotest.js` are both exactly one directory below it, so
   `new URL('../AutoTest.js', import.meta.url)` resolves in both and no build step has to copy an
   asset. `playtest`'s `install-autotest` action stages it plus its `js/plugins.js` entry through
   the same transaction as everything else.
+
+  Two things about it are not style choices but the difference between working
+  and silently doing nothing, both found by driving a licensed install over CDP (report §8 F3/F4):
+  - `step()` and `waitIdle()` force `SceneManager.isGameActive` true for their duration (saved,
+    overridden, restored in `finally`, exactly as `Window_Message.isTriggered` already was). The
+    real one is `document.hasFocus()`, and `updateScene()` skips `_scene.update()` when it is
+    false — so under any driver, in any background tab, every frame was a no-op: the frame counter
+    climbed, the interpreter did not move, and `waitIdle` could only ever return its timeout.
+  - **`waitIdle()` is async** and yields a macrotask per frame, so `DataManager.loadMapData`'s
+    fetch can resolve; a synchronous loop times out on every cross-map transfer. It yields through
+    `MessageChannel`, **not** `setTimeout`, because a background tab clamps timers to about a
+    second and a 600-frame wait would take ten minutes to report a timeout it reached immediately.
+    A test asserts the source contains no `setTimeout(` for this reason.
 
 Coverage (§4.5's `coverage()`) is folded into the scenario report rather than being its own tool,
 and it is counted over *every* command list in the project, not only the ones a scenario touched —
@@ -523,8 +613,18 @@ against stubs in `test/autotest.test.ts`: that catches the failure mode an injec
 has (a typo or renamed member taking the game down on boot) and proves nothing about behaviour
 against a real `Game_Map`.
 
-To close it later, on a real licensed project: `playtest` → `install-autotest` → `commit` → point
-Playwright at the URL and call `window.__AT` over `page.evaluate`. The assertion vocabulary and the
+That last sentence was demonstrated the hard way. The plugin *was* driven against a licensed
+install over CDP, and the stub suite had been green the whole time while two bugs made it
+useless in the only environment it exists for: no `isGameActive` override, and a synchronous
+`waitIdle` (F3/F4 above, both fixed). Neither is reachable from a stub, because a stub has no
+`updateScene` to skip the frame and no fetch to starve. So the browser half of M8 is now
+*demonstrated* rather than only designed — a driver can boot the game, start it, run events and
+read state back — while what is still unverified here is everything a scenario asserts *about a
+real* `Game_Map`, and it stays that way until a licensed project is in CI.
+
+To close the rest, on a real licensed project: `playtest` → `install-autotest` → `commit` → point
+Playwright (or CDP, which is what the verification run used, with no new dependency) at the URL and
+call `window.__AT` over `page.evaluate` — `await` `waitIdle`. The assertion vocabulary and the
 report shape are already the ones `run_scenario` uses, so what is missing is the transport, not the
 test model. Nothing in this package should need to change — which is why this is written here
 rather than left as a TODO in code.
@@ -672,7 +772,13 @@ sixth `tsconfig`, `exports` map and CI step would buy nothing.
   Excluded from every build: `Game.rmmzproject` (a leaked build should not reopen as a project),
   `save/` and `*.rmmzsave` (the developer's playthrough is not the player's), `.git`/`node_modules`.
   A build containing `js/plugins/AutoTest.js` gets a warning — M8's automation hooks let anyone
-  drive the shipped game.
+  drive the shipped game — and so does an NW.js shell that turns out to be the *SDK* flavour
+  (`chromedriver`, `nwjc`, `payload`, `notification_helper`): tens of megabytes, and chromedriver
+  is a remote-control interface sitting beside the game. Warned rather than skipped, because
+  which binaries a distribution needs is the caller's to know. `index.html`'s `<title>` and any
+  `package.json` the *project* carried get the game's own title written into them, since both are
+  what the window shows until `Scene_Boot.updateDocumentTitle` runs, and for anything built from
+  `runtimeFrom` they still name the project it was copied from.
   - **Pruning does not use `RefIndex`, which §3 M11 names.** `RefIndex` indexes numeric *ids*
     (switch 7, Map012) found in event commands; asset references are strings, and most of them live
     outside events entirely — an actor's `faceName`, a tileset's `tilesetNames`, System's title
@@ -702,6 +808,11 @@ sixth `tsconfig`, `exports` map and CI step would buy nothing.
   list in `types/mz.ts`, and every asset-name field in it — `title1Name`, all 24 `sounds`, every
   vehicle — is **empty rather than a plausible default filename**, because this repo ships no art
   or audio and a plausible name would be a dangling reference the validator is right to report.
+  Reconstructing from `types/mz.ts` is also how the file came to be missing `titleCommandWindow`
+  until a licensed machine booted the result (report §8 F2): the type is a *subset* of what MZ
+  writes, so the template's real job is carrying the fields **outside** it that the engine
+  dereferences with no guard. `templates/README.md` is that list, with a call site per field, and
+  `validate`'s `REQUIRED_SYSTEM_FIELDS` is its executable half — add a field to one and the other.
 
 **Acceptance, honestly split** — the same shape as M6, M8, M9 and M10. The plan asks that the
 deployed web bundle 「可在瀏覽器完整遊玩」 and that the created project 「編輯器可直接開啟」. Neither
@@ -714,9 +825,21 @@ fetched back with the right title, with `Game.rmmzproject` 404ing (same file). P
 from both ends — a referenced face survives, an unreferenced one and an unreferenced SE do not, an
 `img/system/` file survives being referenced by nothing, and a filename that appears only as a bare
 positional parameter of a Show Picture command survives (that case is what a keyed-fields-only
-collector would delete). To close the rest: run `create_project --runtimeFrom <an installed
-project>` on a licensed machine, open the result in the editor, then `deploy` it and play it.
-Nothing in `src/` should need to change.
+collector would delete).
+
+**The browser half is now closed, and closing it cost a fix.** That run happened
+(`create_project --runtimeFrom` against a licensed 1.9.x install, then `deploy`, then the build
+served and loaded in a browser). The build half works. The *created project* half did not: its
+System.json was missing `titleCommandWindow`, so the game died in `Scene_Title` before drawing
+anything — report §8 F2, fixed above, and the reason the template now has a README naming every
+field the engine dereferences without a guard. Two corrections to how the run is done, both
+worth writing down: the **`playtest` tool cannot serve a deploy output** (`openProject` requires
+the project marker, which `deploy` deliberately excludes) — use `startPlaytestServer(rootPath)`
+directly; and MZ 1.9.x writes that marker **lowercase**, `game.rmmzproject`.
+
+What is still not closed: opening the created project in the editor, which needs a human in
+front of the GUI, and the same for the Windows executable and the macOS bundle. Nothing in
+`src/` should need to change for any of them.
 
 ### Namespaces and DSL name sugar (§8.1-1)
 

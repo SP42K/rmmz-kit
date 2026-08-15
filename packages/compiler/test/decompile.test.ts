@@ -38,9 +38,10 @@ describe('decompile', () => {
   });
 
   it('falls back to a RawNode for an unmodeled code', () => {
-    // 231 Show Picture — Tier 3, so still nothing but code+parameters here.
-    const commands = compile([{ kind: 'raw', code: 231, parameters: [1, 'Cloud', 0, 0, 0, 0, 100, 100, 255, 0] }]);
-    expect(decompile(commands)).toEqual([{ kind: 'raw', code: 231, parameters: [1, 'Cloud', 0, 0, 0, 0, 100, 100, 255, 0] }]);
+    // 234 Tint Picture — the one picture command SIMPLE_COMMANDS can't hold
+    // (its tone is a nested array), so still nothing but code+parameters here.
+    const commands = compile([{ kind: 'raw', code: 234, parameters: [1, [68, -34, -34, 0], 60, true] }]);
+    expect(decompile(commands)).toEqual([{ kind: 'raw', code: 234, parameters: [1, [68, -34, -34, 0], 60, true] }]);
   });
 
   it('round-trips an unmodeled structural command with an indented body', () => {
@@ -72,7 +73,7 @@ describe('decompile', () => {
 
   it('does not hand out IR that aliases the input command list', () => {
     const source: EventCommand[] = [
-      { code: 231, indent: 0, parameters: [1, 'Cloud'] },
+      { code: 234, indent: 0, parameters: [1, [68, -34, -34, 0]] },
       { code: 0, indent: 0, parameters: [] },
     ];
     const [node] = decompile(source) as [{ kind: 'raw'; parameters: unknown[] }];

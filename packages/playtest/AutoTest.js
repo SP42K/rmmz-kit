@@ -17,6 +17,14 @@
  * sleeping. Bypassing the UI costs input-layer coverage (key bindings, menu
  * navigation) — which is not where generated content breaks.
  *
+ * `waitIdle()` is **async** — `await __AT.waitIdle()`. It has to yield to the
+ * event loop between frames or a `fetch` the game started (loading the next
+ * map's data, say) can never resolve, so a synchronous loop is guaranteed to
+ * time out on any cross-map transfer. It and `step()` also force
+ * `SceneManager.isGameActive` true for their duration, because the real one is
+ * `document.hasFocus()` and an automation driver's tab is never focused — see
+ * the note on each.
+ *
  * Turn this OFF before shipping: it is a remote control for the whole game.
  */
 (() => {
@@ -47,6 +55,58 @@
     // A running event owns the interpreter; when nothing is running, the map's
     // is idle and free to be set up with a list of our choosing.
     return $gameMap._interpreter;
+  }
+
+  /**
+   * Run `fn` with the two engine guards that assume a human at a focused window
+   * turned off, then put both back exactly as they were.
+   *
+   * - `SceneManager.isGameActive()` is `window.top.document.hasFocus()`, and
+   *   `updateScene()` skips `this._scene.update()` when it is false. A driver
+   *   (CDP, Playwright, a background tab) is never focused, so every frame this
+   *   plugin pumped was a no-op: the frame counter climbed, the interpreter did
+   *   not move, and `waitIdle` could only ever return its timeout. That is
+   *   report §8 F3, and it made the whole plugin unusable in the one
+   *   environment it exists for.
+   * - `Window_Message.isTriggered` is the confirm press. Without it the first
+   *   Show Text waits forever for a key nobody presses.
+   *
+   * Both are restored in `finally` rather than left on: they are lies about the
+   * player, and a test that throws must not leave the game believing them.
+   */
+  function withAutomationActive(fn) {
+    const wasActive = SceneManager.isGameActive;
+    const wasTriggered = Window_Message.prototype.isTriggered;
+    SceneManager.isGameActive = () => true;
+    Window_Message.prototype.isTriggered = () => true;
+    try {
+      return fn();
+    } finally {
+      SceneManager.isGameActive = wasActive;
+      Window_Message.prototype.isTriggered = wasTriggered;
+    }
+  }
+
+  /**
+   * Yield one macrotask, so anything the engine has pending — a `fetch` for the
+   * next map's data above all — gets a turn before the next frame.
+   *
+   * `MessageChannel`, deliberately **not** `setTimeout`: browsers clamp timers
+   * in a background tab to about one second, and an automation driver's tab is
+   * always in the background, so a 600-frame `waitIdle` built on `setTimeout`
+   * would take ten minutes to report a timeout it reached in the first second.
+   * A channel message is an ordinary task and is not clamped.
+   */
+  function nextMacrotask() {
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port2.postMessage(0);
+    });
   }
 
   const AT = {
@@ -144,28 +204,80 @@
      * Advance N logical frames. `SceneManager.updateMain` is the tick without
      * the rAF/frame-pacing around it, so a test runs as fast as the CPU allows
      * instead of at 60fps (plan §3 M8's "60fps 主迴圈太慢" row).
+     *
+     * Synchronous on purpose: N frames with nothing awaited in between is what
+     * "advance the state machine" means, and a caller that needs the engine's
+     * own pending work to land wants `waitIdle` instead.
      */
     step(frames = 1) {
-      for (let i = 0; i < frames; i++) SceneManager.updateMain();
+      withAutomationActive(() => {
+        for (let i = 0; i < frames; i++) SceneManager.updateMain();
+      });
     },
 
     /**
      * Step until no event is running and no message is waiting for input.
-     * Messages auto-advance while waiting (Window_Message treats every frame as
-     * a confirm press) — otherwise the very first Show Text deadlocks the run.
+     * **Async — `await` it.**
+     *
+     * Every frame yields a macrotask (see `nextMacrotask`). Without that the
+     * loop never gives the browser a turn, so `DataManager.loadMapData`'s fetch
+     * cannot resolve and any transfer to another map times out with the game
+     * stuck mid-load — report §8 F4, the second half of what made this plugin
+     * unusable against a real runtime.
      */
-    waitIdle(maxFrames = 600) {
+    async waitIdle(maxFrames = 600) {
+      const wasActive = SceneManager.isGameActive;
       const wasTriggered = Window_Message.prototype.isTriggered;
+      SceneManager.isGameActive = () => true;
       Window_Message.prototype.isTriggered = () => true;
       try {
         for (let i = 0; i < maxFrames; i++) {
           if (!$gameMap.isEventRunning() && !$gameMessage.isBusy() && !$gamePlayer.isTransferring()) return true;
           SceneManager.updateMain();
+          await nextMacrotask();
         }
       } finally {
+        // Not withAutomationActive(): the overrides have to survive the awaits,
+        // which a try/finally around a synchronous callback cannot express.
+        SceneManager.isGameActive = wasActive;
         Window_Message.prototype.isTriggered = wasTriggered;
       }
       return false;
+    },
+
+    /**
+     * Start a new game without going through the title screen's command window.
+     * `Scene_Title.commandNewGame` is exactly these two calls; follow with
+     * `await waitIdle()` to let the map scene finish loading.
+     *
+     * Here because a driver has no other way in: the title screen is the first
+     * scene, and clicking it means synthesising input into a canvas, which
+     * plan §4.6 rejects for the reason this whole plugin exists.
+     */
+    newGame() {
+      DataManager.setupNewGame();
+      SceneManager.goto(Scene_Map);
+    },
+
+    /**
+     * Answer a Show Choices that is waiting. `index` is 0-based, matching the
+     * 402 branch order (and `run_scenario`'s `answerChoices`).
+     *
+     * Routed through the choice window when the scene has one, because that is
+     * what closes the message the way a player's Enter closes it; the bare
+     * `onChoice` fallback picks the branch but leaves the window to `waitIdle`.
+     */
+    answerChoice(index) {
+      if (!$gameMessage.isChoice()) {
+        throw new Error('answerChoice: no Show Choices is waiting for an answer');
+      }
+      const list = SceneManager._scene && SceneManager._scene._choiceListWindow;
+      if (list) {
+        list.select(index);
+        list.processOk();
+        return;
+      }
+      $gameMessage.onChoice(index);
     },
 
     /** Everything Show Text has produced since the last call; clears the buffer. */

@@ -68,7 +68,7 @@ v0.1 把「取代 MZ 編輯器」列為非目標（工具鏈是補充，人在�
 | 資料庫：flat 表（Actors…Troops、CommonEvents） | `upsert_database`（10 表） | ✓ | M5 已交付 |
 | 資料庫：System（標題/初始隊伍/用語/戰鬥系統） | `update_system`（object merge，非列模型） | ✓ | M6.5 已交付 |
 | 資料庫：Tilesets / Animations / MapInfos | `upsert_database` 加表 | ✓ | M6.5 已交付 |
-| 地圖生命週期（新建/改尺寸、地圖樹） | L0 create-file + `create_map`/`resize_map` | ✓（刪除地圖仍未做） | M7 已交付 |
+| 地圖生命週期（新建/改尺寸/刪除、地圖樹） | L0 create/delete-file + `create_map`/`resize_map`/`delete_map` | ✓ | M7 已交付；刪除隨 §8.1-4 補齊 |
 | 地圖繪製（tile / autotile / 通行度） | `paint_tiles` 原語 + L3.5 拼接 | ✓ | M7 已交付 |
 | 事件：Tier 1 命令 | `apply_script`（L2 編譯器） | ✓ | M3/M5 已交付 |
 | 事件：Tier 2（357 插件指令、商店、戰鬥、移動路線…） | L2 Tier 2 + `PageSpec.moveRoute` | ✓ | M7.5 已交付 |
@@ -883,12 +883,25 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
    「Namespaces and DSL name sugar」）；第三件（quest-graph 規則本身）是 M4 的活，
    前置已就位但仍未排程。完整表達式語言（`when: "!quest.herb.started"` 的 `!`/`&&`）
    也仍未做——resolver 就是它要編譯到的那一層。
-2. **§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
+2. ~~**§4.4 驗證規則欠帳** — 懸空 weapon/armor/skill/state/troop/class id。M7.5 之後
    typed node 已拿得到這些 id，技術阻礙已消失，只是沒人排程；`references.ts` 模式現成，
-   半天級。
+   半天級。~~ **已交付（2026-08）**：命令清單側走 decompiled typed node
+   （`checkTypedCommandIds`：weapon/armor/skill/state/troop/actor，actorId 0 =
+   全隊不算參照）；資料庫列側直讀（`checkDatabaseIds`：actor→class、class
+   learnings→skill、enemy actions→skill）。規則首跑即抓到 fixture 自身的
+   懸空 classId（actor 3/4），已一併修正。
 3. **L2 Tier 3**（§4.3）— 231–235 圖片、261 影片、載具、281–285、331–333。目前走
-   `RawNode` 不會掉資料，需求驅動再做。
-4. **刪除地圖** — §0 對照表註明「刪除地圖仍未做」，地圖生命週期唯一缺角。
+   `RawNode` 不會掉資料，需求驅動再做。**部分交付（2026-08）**：圖片子集
+   231/232/233/235 以 `SIMPLE_COMMANDS` 表項落地（需求來自角色立繪演出）；
+   234 因 tone 為巢狀陣列不合平面表模型，與 261／載具／281–285／331–333 一同
+   維持 `RawNode`。232 的第 2 參數（未使用槽位）依 R1 級假設寫 0，型別不合的
+   既有資料照舊退回 `RawNode`，不掉資料。
+4. ~~**刪除地圖** — §0 對照表註明「刪除地圖仍未做」，地圖生命週期唯一缺角。~~
+   **已交付（2026-08）**：core 補上第三個動詞 `deleteFile`（commit 時 unlink 並以
+   `git add` 暫存刪除、rollback 復活、delete 後 create 視為 replace），mapgen
+   `deleteMap` 帶三重防護（起始地圖、MapInfos 子地圖、其他檔案的 transfer 參照；
+   地圖內部的自我參照不擋——它隨地圖一起走），MCP 註冊 `delete_map`。
+   §8.1-1 尾註的表達式語言（`!`/`&&`）維持未做，觸發條件不變。
 5. **`cli/` 套件的去留** — §1.2 與決策 A 都畫了它，從未建；MCP bin 已覆蓋大部分用途。
    下次改 plan 時明確二選一：補做或從 §1.2 刪掉。
 
@@ -904,17 +917,23 @@ stdio client 接上）。剩餘缺口分三類，依「本 repo 內做不做得�
 
 ### 8.3 本 repo 內做不完的（缺付費編輯器或真實模型，是前提不是待辦）
 
-每項 `CLAUDE.md` 都有「Acceptance, honestly split」段落，且都不需改 `src/`：
+**這一輪已經跑過了。** 2026-08，在一台裝有授權 MZ 1.9.x（`H:\Program Files\KADOKAWA\RPGMZ`）
+的 Windows 機器上執行了本節最後一段所說的收尾動作，報告見
+`docs/licensed-machine-verification-2026-08.md`（語料本身是 KADOKAWA 著作物，**不進 repo**）。
+結果不是「六項全關」，而是三種不同的答案，
+以及八個真實缺陷——其中一個（F2）是 `create_project` 產出的專案根本開不了機。
+下表是跑完之後的狀態，不是跑之前的預期：
 
-| 缺口 | 需要什麼 |
-|---|---|
-| M6 勝率誤差 < 10% | MZ 內建範例資料庫＋真實遊玩比對 |
-| M8 瀏覽器半邊（Playwright 驅動 `__AT`） | MZ runtime（付費） |
-| M9 修復率 ≥ 靜態 8/10、動態 4/10 | 真實模型接 `runRepairLoop` |
-| M10 一句話 → spec | 真實模型讀 `rmmz://game-brief-guide` |
-| M11 瀏覽器通關、編輯器開啟 | 引擎＋編輯器（付費） |
-| §6 R1/R9 golden file 對真實編輯器輸出 | 授權機器上手畫樣張比對（現有 golden 只對 fixture） |
+| 缺口 | 狀態 | 說明 |
+|---|---|---|
+| M6 勝率誤差 < 10% | **部分推翻** | 兩端（必勝／必敗）成立；勝負接近的中段 6 組裡 3 組超出。成因不在傷害算式，而在 F8（`attackTimesAdd` 未計入，**已修**）與 F7（目標選擇均勻隨機 vs 玩家集火，**已揭露並提供 `targetPolicy` 上下界**）。`evaluate()` 完整建模仍不做。 |
+| M8 瀏覽器半邊 | **已關（含前置修正）** | 用 CDP 驅動（不需要新增 Playwright 相依）跑通了 `__AT`。但驅動之前必須先修兩個讓外掛在自動化環境下完全空轉的 bug：F3（`isGameActive()` 是 `document.hasFocus()`，非前景分頁的每一幀都被 `updateScene` 跳過）與 F4（同步 `waitIdle` 讓 `loadMapData` 的 fetch 永遠排不進事件迴圈）。兩者都已修，`waitIdle` 改為 async。 |
+| M9 修復率 | 未動 | 仍需真實模型接 `runRepairLoop`。這一輪沒有跑。 |
+| M10 一句話 → spec | 未動 | 仍需真實模型讀 `rmmz://game-brief-guide`。這一輪沒有跑。 |
+| M11 瀏覽器通關 | **已關** | `deploy` 產物由 `startPlaytestServer` 服務、在瀏覽器內載入通過。（清單措辭更正：**`playtest` 工具不能服務 deploy 產物**——`openProject` 要求專案標記檔，而 deploy 刻意排除它。要用底層的 `startPlaytestServer(rootPath)`。） |
+| M11 編輯器開啟 | **未關，且 F2 是前置** | `create_project` 的產出缺 `titleCommandWindow`，`rmmz_scenes.js:579` 無守衛解參考 → `Scene_Title` 當場 TypeError。已修（模板補欄位 + `validate` 的 runtime 規則補進清單）。實際用編輯器開啟仍待人在 GUI 前操作。 |
+| §6 R1/R9 golden file | **已關，且量化** | 不是手畫樣張，而是直接拿 MZ 自己的 `samplemaps` + `newdata` 當語料：2498 條真實編輯器指令串，逐位元組相同率 **97.4%**。差異全部被指名：68 條是 205 鏡像列數（F6，已修）、5 條是分支主體的 `{code:0}` 填充（F5，已修為容忍 + 正規化），其餘是既有的「一律寫完整參數陣列」規則。R9 autotile shape 未在此輪覆蓋。 |
 
-這六項共用一個收尾動作：在一台有授權 MZ 的機器上跑一輪
-（`create_project --runtimeFrom` → 編輯器開啟 → `playtest` + Playwright → `deploy` 通關），
-一次關掉 M8 / M11 / R9 三項。整批等授權機器，不值得在此 repo 內動工。
+沒關掉的兩項（M9、M10）共用同一個前提：**要一個真實模型**，不是要一台授權機器。
+剩下需要人在 GUI 前的：編輯器開啟產出專案、編輯器 drift 檢查（T2）、Windows exe 實際試玩、
+macOS 啟動、以及 233/234/236 這三個在兩份語料裡都沒出現的指令的真實參數形狀。

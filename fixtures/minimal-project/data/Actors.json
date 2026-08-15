@@ -35,7 +35,7 @@
   {
     "id": 3,
     "name": "Gale",
-    "classId": 3,
+    "classId": 1,
     "level": 1,
     "characterName": "Actor1",
     "characterIndex": 2,
@@ -51,7 +51,7 @@
   {
     "id": 4,
     "name": "Michelle",
-    "classId": 4,
+    "classId": 2,
     "level": 1,
     "characterName": "Actor1",
     "characterIndex": 3,

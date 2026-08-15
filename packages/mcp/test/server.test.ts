@@ -42,6 +42,7 @@ describe('MCP server wiring', () => {
         'simulate_battle',
         'update_system',
         'create_map',
+        'delete_map',
         'resize_map',
         'update_map',
         'find_free_rect',

@@ -77,6 +77,72 @@ describe('simulate', () => {
     expect(stall.warnings.join(' ')).toMatch(/stall/);
   });
 
+  /**
+   * F7 (report §6/§8). Who a single-target action hits is the player's call in
+   * MZ, and the licensed playtest showed it is worth as much as the skill
+   * choice — the whole +15.3pp that was left after F8, on the one matchup where
+   * the sides were evenly matched. Before this the report named the skill
+   * policy and said nothing about targeting, so a consumer had one number and
+   * no way to know which direction it was wrong in.
+   */
+  describe('target policy', () => {
+    // Four Ogres: a long fight against enemies that hit back, which is the only
+    // shape where targeting shows up at all. Against a side that dies in two
+    // turns anyway, both policies clear the same total HP with the same total
+    // damage and the difference is noise.
+    const spec = {
+      party: [{ actorId: 1, level: 45, equips: [2, 1, 0, 0, 0] }, { actorId: 2, level: 45 }],
+      enemies: [3, 3, 3, 3],
+      trials: 200,
+      maxTurns: 60,
+      seed: 5,
+    };
+
+    it('focus fire ends the fight sooner and takes far less damage doing it', () => {
+      const spread = simulate(session, spec);
+      const focused = simulate(session, { ...spec, targetPolicy: 'focus' });
+
+      // Same party, same enemies, same seed: the only difference is which of
+      // the living Ogres each swing lands on. Killing them one at a time
+      // removes an attacker per kill instead of leaving four alive to the end,
+      // which is the mechanism behind F7's +15.3pp.
+      expect(focused.turns.mean).toBeLessThan(spread.turns.mean);
+      expect(focused.damage.byEnemies.hits).toBeLessThan(spread.damage.byEnemies.hits * 0.85);
+    });
+
+    it('leaves enemy targeting random, because Game_Enemy really is random', () => {
+      // `Game_Unit.randomTarget` is what enemies use, so "focus" is a claim
+      // about how a *player* plays. Letting it drive both sides made fights
+      // longer, not shorter — enemies concentrating on one party member kill
+      // it, and a four-Ogre fight against one survivor runs on.
+      const solo = { ...spec, party: [{ actorId: 1, level: 45, equips: [2, 1, 0, 0, 0] }], enemies: [3] };
+      const outcome = ({ turns, winRate, damage }: ReturnType<typeof simulate>) => ({ turns, winRate, damage });
+
+      // One actor, one enemy: nothing left for either policy to choose between,
+      // so only the two reported policy fields may differ.
+      expect(outcome(simulate(session, { ...solo, targetPolicy: 'focus' }))).toEqual(outcome(simulate(session, solo)));
+    });
+
+    it('reports which one produced the numbers, and says the other exists', () => {
+      const spread = simulate(session, spec);
+      const focused = simulate(session, { ...spec, targetPolicy: 'focus' });
+
+      expect(spread.targetPolicy).toBe('random');
+      expect(spread.policy).toMatch(/uniform random among living/);
+      expect(spread.policy).toMatch(/targetPolicy "focus"/);
+
+      expect(focused.targetPolicy).toBe('focus');
+      expect(focused.policy).toMatch(/lowest-HP living enemy/);
+      expect(focused.policy).toMatch(/targetPolicy "random"/);
+
+      // The skill half of the policy is still reported by both.
+      for (const report of [spread, focused]) {
+        expect(report.policy).toMatch(/costliest affordable damaging skill/);
+        expect(report.policy).toMatch(/Nobody guards, uses items, or flees/);
+      }
+    });
+  });
+
   it('rejects a spec with no enemies, an unknown troop, or both sources at once', () => {
     const party = [{ actorId: 1 }];
     expect(() => simulate(session, { party, enemies: [] })).toThrow(/no enemies/);

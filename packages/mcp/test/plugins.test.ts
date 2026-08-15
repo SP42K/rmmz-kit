@@ -114,6 +114,46 @@ describe('import_asset (M7.6)', () => {
     expect(result.path).toBe('audio/se/DoorOpen.ogg');
   });
 
+  it('imports a plugin file into js/plugins and can enable it in the same session', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+
+    // The whole point: import_asset stages the file, readRaw sees staged
+    // writes, so manage_plugins' "No such plugin" guard passes before commit —
+    // one session covers install-and-enable instead of dead-ending at
+    // "copy the file in by hand".
+    const source = await sourceFile('BattleVoiceMZ.js', [...Buffer.from('// battle voice plugin\n')]);
+    const result = await tools.importAsset(session, { dir: 'js/plugins', source });
+    expect(result).toEqual({ path: 'js/plugins/BattleVoiceMZ.js' });
+
+    // The catalog grounds manage_plugins names the same way it grounds sprites.
+    expect((await assetCatalog(session))['js/plugins']).toEqual(['BattleVoiceMZ', 'TestPlugin']);
+
+    const plugins = await tools.managePlugins(session, [{ name: 'BattleVoiceMZ', parameters: { volume: '90' } }]);
+    expect(plugins.find((entry) => entry.name === 'BattleVoiceMZ')).toEqual({
+      name: 'BattleVoiceMZ',
+      status: true,
+      description: '',
+      parameters: { volume: '90' },
+    });
+
+    await session.commit('feat: install BattleVoiceMZ');
+    expect(await readFile(path.join(dir, 'js', 'plugins', 'BattleVoiceMZ.js'), 'utf-8')).toBe('// battle voice plugin\n');
+    const written = await readFile(path.join(dir, 'js', 'plugins.js'), 'utf-8');
+    expect(parsePluginsJs(written).entries.map((entry) => entry.name)).toContain('BattleVoiceMZ');
+  });
+
+  it('rejects a non-js file aimed at js/plugins', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    const source = await sourceFile('Hero.png');
+
+    // PluginManager.loadScript appends .js, so anything else never loads.
+    await expect(tools.importAsset(session, { dir: 'js/plugins', source })).rejects.toThrow(/takes .js/);
+  });
+
   it('rejects an unknown folder, a wrong extension, and a name with a path in it', async () => {
     const { dir, cleanup } = await makeTestProject();
     cleanups.push(cleanup);

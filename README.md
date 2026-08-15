@@ -101,6 +101,7 @@ quest?" about an edit it has not committed.
 | Tool | |
 |---|---|
 | `create_map` | Write `Map###.json` and its MapInfos row; returns the allocated map id. |
+| `delete_map` | Delete a map and null its MapInfos row. Refused while the starting map, a MapInfos child, or a transfer from another file still points at it. |
 | `resize_map` | Resize anchored top-left. Events are never moved; any left out of bounds are returned. |
 | `paint_tiles` | Fill rectangles of one layer with a tile id, then re-derive autotile shapes over what changed. |
 | `set_tile_flags` | Passability, terrain tags and tile options (star/ladder/bush/counter/damage) for individual tile ids. |
@@ -130,7 +131,7 @@ quest?" about an edit it has not committed.
 |---|---|
 | `generate_game` | Spec → a whole small RPG (a map per area, portals, a gated quest chain, a boss), then prove it is finishable: validate, simulate every fight, play a generated walkthrough to the clear switch. |
 | `playtest` | Local playtest site over the project — the editor's Playtest button. Also stages `AutoTest.js`, which exposes `window.__AT` for browser automation. |
-| `deploy` | Export a shippable package, minus the editor project file, save data and unreferenced assets. `target: "windows"` wraps it in an NW.js shell you supply. |
+| `deploy` | Export a shippable package, minus the editor project file, save data and unreferenced assets. `target: "windows"` or `"macos"` wraps it in an NW.js shell you supply (the .app is not codesigned). |
 | `create_project` | Create a new MZ project from the blank template, git-initialised and ready for `openProject`. |
 
 ### Transaction
@@ -178,17 +179,34 @@ roadmap is `docs/rmmz-automation-implementation-plan.md` (Chinese).
 
 Milestones M0–M11 are delivered — see `CLAUDE.md` for what each one covers.
 
-Several acceptance criteria are **unmet by construction rather than by neglect**: they need
-something this repo cannot contain. Each is written up honestly where it lives, and none of
-them needs a source change to close (plan §8.3):
+Several acceptance criteria used to be **unmet by construction rather than by neglect**,
+because they need something this repo cannot contain. Most of those were finally run on a
+machine with a licensed MZ 1.9.x install, which changed the table rather than just ticking
+it — and turned up eight real defects, one of which was that `create_project`'s own output
+could not boot. The full write-up is
+[`docs/licensed-machine-verification-2026-08.md`](docs/licensed-machine-verification-2026-08.md);
+the per-gap status is plan §8.3.
 
-| Gap | Needs |
+| Gap | Status |
 |---|---|
-| Battle sim within 10% of real play | MZ's sample database + a real playthrough to compare against |
-| Driving `window.__AT` from a browser | The MZ runtime (paid) |
-| Repair-rate and one-sentence→spec numbers | A real model in the loop — in this architecture the model is the MCP client, not this process |
-| Deployed build playable / project opens in editor | The engine and editor (paid) |
+| Battle sim within 10% of real play | **Partly disproved.** Fine at the ends, outside 10% on 3 of 6 close matchups. Not the damage math: extra attack times (now modelled) and target selection (now disclosed, and bracketed by `targetPolicy: 'random' \| 'focus'`) |
+| Driving `window.__AT` from a browser | **Closed**, over CDP — after fixing two bugs that made the plugin a silent no-op under any driver. `waitIdle` is now async |
+| Compiler output matches the editor byte for byte | **Closed and quantified**: 97.4% over 2498 real editor-written command lists, with every difference named and two of them fixed |
+| Deployed build playable in a browser | **Closed** — served and loaded. Use `startPlaytestServer(root)`, not the `playtest` tool: a build has no project marker for `openProject` to find |
+| Project opens in the editor | Still open, and needs a human at the GUI |
+| Repair-rate and one-sentence→spec numbers | Still open — needs a real model in the loop, which in this architecture is the MCP client, not this process |
+
+`compose_map` generates dungeon-shaped maps — connected rooms and corridors. Towns,
+exteriors and anything with an art direction are `paint_tiles` plus a human (or the
+editor); the BSP generator was never meant to fake either.
 
 The headless scenario runner covers the event layer, not rendering, movement or TPB timing.
 Anything it does not model increments an `unmodeled` counter in its report instead of being
 skipped silently — a green run with a non-empty `unmodeled` proved less than it looks.
+
+It also does not model **battle rewards**. A Battle Processing outcome is answered from
+`answerBattles`, not fought, so the gold, EXP, drops and level-ups MZ pays out on a win never
+land: a scenario asserting "the player can afford the sword after the fight" is asserting
+about a party that was never paid. A report whose run won a battle says so in `notes` — kept
+separate from `unmodeled`, which has to keep meaning "something was skipped". Damage and win
+rates are `simulate_battle`'s question.

@@ -133,4 +133,86 @@ describe('checkReferences', () => {
     const findings = await checkReferences(session);
     expect(findings.filter((f) => f.rule.startsWith('references/asset'))).toEqual([]);
   });
+
+  it('flags dangling weapon/armor/skill/state/troop ids read off typed Tier 2 nodes (§8.1-2)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      const list = [
+        { code: 127, indent: 0, parameters: [99, 0, 0, 1, false] }, // gainWeapon 99
+        { code: 128, indent: 0, parameters: [99, 0, 0, 1, false] }, // gainArmor 99
+        { code: 318, indent: 0, parameters: [0, 1, 0, 99] }, // changeSkill: actor 1 learns skill 99
+        { code: 313, indent: 0, parameters: [0, 1, 0, 99] }, // changeState: state 99 on actor 1
+        { code: 311, indent: 0, parameters: [0, 99, 0, 0, 100, false] }, // changeHp on actor 99
+        { code: 301, indent: 0, parameters: [0, 99, false, false] }, // battle troop 99
+        { code: 604, indent: 0, parameters: [] },
+        { code: 302, indent: 0, parameters: [1, 99, 0, 0, false] }, // shop selling weapon 99
+      ];
+      data.events.push(mapEvent(2, 'Broken', [page(list)]));
+    });
+    const findings = await checkReferences(session);
+    const dangling = (kind: string, id: number) =>
+      findings.some((f) => f.rule === `references/dangling-${kind}` && f.severity === 'error' && f.message.includes(`${id}`));
+    expect(dangling('weapon', 99)).toBe(true);
+    expect(dangling('armor', 99)).toBe(true);
+    expect(dangling('skill', 99)).toBe(true);
+    expect(dangling('state', 99)).toBe(true);
+    expect(dangling('actor', 99)).toBe(true);
+    expect(dangling('troop', 99)).toBe(true);
+  });
+
+  it('flags a dangling Show Animation id, and leaves the editor\'s "None" alone', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      const list = [
+        { code: 212, indent: 0, parameters: [0, 99, false] }, // animation 99 on this event
+        { code: 212, indent: 0, parameters: [-1, 0, false] }, // "None" on the player
+      ];
+      data.events.push(mapEvent(2, 'Sparkle', [page(list)]));
+    });
+
+    const findings = (await checkReferences(session)).filter((f) => f.rule === 'references/dangling-animation');
+
+    // A dangling one is Sprite_Animation reading effectName off undefined — a
+    // crash on the frame the event plays, the same class as every other id here.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('error');
+    expect(findings[0].message).toContain('99');
+  });
+
+  it('treats actorId 0 as "entire party", not a dangling actor', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<MapData>('Map001.json', (data) => {
+      data.events.push(mapEvent(2, 'HealAll', [page([{ code: 314, indent: 0, parameters: [0, 0] }])]));
+    });
+    const findings = await checkReferences(session);
+    expect(findings.filter((f) => f.rule === 'references/dangling-actor')).toEqual([]);
+  });
+
+  it('flags dangling class and skill ids in database rows (§8.1-2)', async () => {
+    const { dir, cleanup } = await makeTestProject();
+    cleanups.push(cleanup);
+    const session = await openProject(dir);
+    session.updateFile<Array<{ id: number; classId: number } | null>>('Actors.json', (data) => {
+      data[1]!.classId = 99;
+    });
+    session.updateFile<Array<{ id: number; learnings: Array<{ level: number; skillId: number; note: string }> } | null>>(
+      'Classes.json',
+      (data) => {
+        data[1]!.learnings.push({ level: 5, skillId: 99, note: '' });
+      }
+    );
+    session.updateFile<Array<{ id: number; actions: Array<{ skillId: number }> } | null>>('Enemies.json', (data) => {
+      data[1]!.actions[0].skillId = 98;
+    });
+    const findings = await checkReferences(session);
+    expect(findings.some((f) => f.rule === 'references/dangling-class' && f.file === 'Actors.json')).toBe(true);
+    expect(findings.some((f) => f.rule === 'references/dangling-skill' && f.file === 'Classes.json' && f.message.includes('99'))).toBe(true);
+    expect(findings.some((f) => f.rule === 'references/dangling-skill' && f.file === 'Enemies.json' && f.message.includes('98'))).toBe(true);
+  });
 });
