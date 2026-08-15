@@ -500,6 +500,12 @@ function registerTools(server: McpServer, session: ProjectSession): void {
         trials: z.number().int().min(1).max(10000).optional(),
         maxTurns: z.number().int().min(1).max(1000).optional(),
         seed: z.number().int().optional(),
+        targetPolicy: z
+          .enum(['random', 'focus'])
+          .optional()
+          .describe(
+            'Who a single-target action hits: "random" (default) spreads damage across living enemies, "focus" always takes the lowest-HP one. MZ leaves this to the player, and the two bracket the real win rate — run both when a matchup looks close'
+          ),
       },
     },
     async (spec) => json(tools.simulateBattle(session, spec))

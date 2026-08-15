@@ -27,6 +27,18 @@ import { Rng } from './rng.js';
  * player. It is stated in the report (`policy`) because it is the one input a
  * balance number is most sensitive to: a party that never heals loses fights a
  * real player wins.
+ *
+ * So is the *target* choice, which the licensed-machine run showed is worth as
+ * much as the skill choice and used not to be reported at all (§8 F7): picking
+ * uniformly among living enemies spreads damage over all of them, while a real
+ * player — and MZ's own auto-battle `evaluate()` — focuses fire and removes an
+ * attacker a turn sooner. On the one matchup where the sides were evenly
+ * matched that was +15.3 percentage points of win rate, all of the divergence
+ * left after F8. `targetPolicy` is therefore a *spec* option rather than a
+ * hidden constant: `'random'` (the default, unchanged) and `'focus'` bracket
+ * the real answer instead of leaving a caller with one number and no error bar.
+ * Neither is `evaluate()` — modelling that means modelling every skill's value
+ * to every battler, which is L5's job, not a heuristic's.
  */
 
 export interface BattleSpec {
@@ -40,7 +52,16 @@ export interface BattleSpec {
   maxTurns?: number;
   /** Default 0. Same seed + same data = same report. */
   seed?: number;
+  /**
+   * How a single-target action picks among living enemies. `'random'` (default)
+   * is uniform; `'focus'` always takes the lowest-HP living one, which is what
+   * a player does and what `Game_Action.evaluate` approximates. Run both to
+   * bracket a matchup — see the note at the top of this file.
+   */
+  targetPolicy?: TargetPolicy;
 }
+
+export type TargetPolicy = 'random' | 'focus';
 
 export interface DamageStats {
   hits: number;
@@ -71,21 +92,38 @@ export interface BattleReport {
   damage: { byParty: DamageStats; byEnemies: DamageStats };
   /** Trials where a battler at full HP was killed by a single hit. */
   oneShotKillRate: number;
+  /** Which targeting policy produced these numbers — echoed so a report is self-describing. */
+  targetPolicy: TargetPolicy;
   policy: string;
   /** Human-readable calls to action — the "一擊必殺 / 無限僵持" findings the plan asks for. */
   warnings: string[];
 }
 
-const POLICY =
-  'Actors: heal when an ally is under 50% HP and a healing skill is affordable, otherwise the ' +
-  'costliest affordable damaging skill. Enemies: MZ rating-weighted selection over their action list. ' +
-  'Nobody guards, uses items, or flees.';
+const TARGET_POLICY: Record<TargetPolicy, string> = {
+  random:
+    'Targets: uniform random among living, so damage spreads across the enemy side — MZ leaves ' +
+    'targeting to the player, and a player (like Game_Action.evaluate) focuses fire, which ends ' +
+    'an even matchup sooner than this reports. Re-run with targetPolicy "focus" for the other bound.',
+  focus:
+    'Targets: always the lowest-HP living enemy, an upper bound on focus fire — MZ\'s own ' +
+    'evaluate() weighs more than remaining HP. Re-run with targetPolicy "random" for the other bound.',
+};
+
+function policyText(targets: TargetPolicy): string {
+  return (
+    'Actors: heal when an ally is under 50% HP and a healing skill is affordable, otherwise the ' +
+    'costliest affordable damaging skill. Enemies: MZ rating-weighted selection over their action list. ' +
+    'Nobody guards, uses items, or flees. ' +
+    TARGET_POLICY[targets]
+  );
+}
 
 export function simulate(session: ProjectSession, spec: BattleSpec): BattleReport {
   const db = loadDatabase(session);
   const trials = spec.trials ?? 1000;
   const maxTurns = spec.maxTurns ?? 30;
   const seed = spec.seed ?? 0;
+  const targetPolicy = spec.targetPolicy ?? 'random';
   const enemyIds = resolveEnemies(db, spec);
   if (spec.party.length === 0) throw new Error('Battle spec has an empty party');
   if (enemyIds.length === 0) throw new Error('Battle spec has no enemies');
@@ -94,14 +132,14 @@ export function simulate(session: ProjectSession, spec: BattleSpec): BattleRepor
   const formula = new FormulaEvaluator(rng);
   const results: TrialResult[] = [];
   for (let i = 0; i < trials; i++) {
-    results.push(runBattle(db, spec.party, enemyIds, maxTurns, rng, formula));
+    results.push(runBattle(db, spec.party, enemyIds, maxTurns, rng, formula, targetPolicy));
   }
 
   return buildReport(
     spec.party.map((member) => actorBattler(db, member).name),
     enemyIds.map((id) => enemyBattler(db, id).name),
     results,
-    { trials, seed, maxTurns }
+    { trials, seed, maxTurns, targetPolicy }
   );
 }
 
@@ -134,7 +172,8 @@ function runBattle(
   enemyIds: number[],
   maxTurns: number,
   rng: Rng,
-  formula: FormulaEvaluator
+  formula: FormulaEvaluator,
+  targetPolicy: TargetPolicy
 ): TrialResult {
   const party = partySpec.map((member) => actorBattler(db, member));
   const enemies = enemyIds.map((id) => enemyBattler(db, id));
@@ -178,7 +217,7 @@ function runBattle(
       // confused healer swings at someone, it does not misfire its Heal.
       const used = forced ? db.skills[ATTACK_SKILL_ID] ?? skill : skill;
       subject.gainMp(-used.mpCost); // Game_Battler.paySkillCost — no TP, see battler.ts
-      const targets = forced ?? resolveTargets(rng, used, subject, allies, foes);
+      const targets = forced ?? resolveTargets(rng, used, subject, allies, foes, targetPolicy);
       // `Game_Action.numRepeats()`: the item's own repeats, plus the subject's
       // attackTimesAdd for a *normal attack* only, floored. Max(1, ...) is this
       // simulator's own guard against a data row with repeats 0 or missing.
@@ -327,28 +366,58 @@ function meetsCondition(action: EnemyAction, subject: Battler, foes: Battler[], 
   }
 }
 
-/** `Game_Action.makeTargets()`, minus the tgr-weighted random pick (every alive target is equally likely). */
-function resolveTargets(rng: Rng, skill: Skill, subject: Battler, allies: Battler[], foes: Battler[]): Battler[] {
-  const random = (pool: Battler[], count: number) => {
+/**
+ * `Game_Action.makeTargets()`, minus the tgr-weighted pick.
+ *
+ * Which living enemy a single-target action lands on is the player's call in
+ * MZ, so it is this simulator's policy, not a port — and a consequential one:
+ * `'random'` spreads damage and leaves every enemy attacking to the end,
+ * `'focus'` removes them one at a time. See the file header for what the
+ * difference measured against a real playtest (§8 F7).
+ */
+function resolveTargets(
+  rng: Rng,
+  skill: Skill,
+  subject: Battler,
+  allies: Battler[],
+  foes: Battler[],
+  targetPolicy: TargetPolicy
+): Battler[] {
+  const choose = (pool: Battler[], count: number) => {
     const living = alive(pool);
     if (living.length === 0) return [];
+    // Actors only. `Game_Unit.randomTarget` is what enemies genuinely use, so
+    // letting focus drive both sides would not be "the player plays better",
+    // it would be a different game — and it measures that way: enemies
+    // concentrating on one party member kill it and make the fight *longer*.
+    const focus =
+      targetPolicy === 'focus' && subject.isActor
+        ? living.reduce((worst, one) => (one.hp < worst.hp ? one : worst))
+        : null;
     // MZ picks each of the N targets independently, so the same enemy can be
-    // hit twice by a "2 random enemies" skill.
-    return Array.from({ length: count }, () => rng.pick(living));
+    // hit twice by a "2 random enemies" skill. The roll is drawn even under
+    // 'focus' and then discarded, so the two policies share one RNG stream:
+    // comparing them isolates targeting instead of also reshuffling every
+    // later hit, crit and variance roll, which is what makes them a bracket
+    // rather than two unrelated runs.
+    return Array.from({ length: count }, () => {
+      const rolled = rng.pick(living);
+      return focus ?? rolled;
+    });
   };
 
   switch (skill.scope) {
     case 0:
       return [];
     case 1:
-      return random(foes, 1);
+      return choose(foes, 1);
     case 2:
       return alive(foes);
     case 3:
     case 4:
     case 5:
     case 6:
-      return random(foes, skill.scope - 2);
+      return choose(foes, skill.scope - 2);
     case 7: {
       const living = alive(allies);
       if (living.length === 0) return [];
@@ -377,7 +446,7 @@ function resolveTargets(rng: Rng, skill: Skill, subject: Battler, allies: Battle
     case 14:
       return [...alive(allies), ...alive(foes)];
     default:
-      return random(foes, 1);
+      return choose(foes, 1);
   }
 }
 
@@ -385,7 +454,7 @@ function buildReport(
   partyNames: string[],
   enemyNames: string[],
   results: TrialResult[],
-  meta: { trials: number; seed: number; maxTurns: number }
+  meta: { trials: number; seed: number; maxTurns: number; targetPolicy: TargetPolicy }
 ): BattleReport {
   const rate = (predicate: (r: TrialResult) => boolean) =>
     results.filter(predicate).length / Math.max(1, results.length);
@@ -423,7 +492,8 @@ function buildReport(
       ),
     },
     oneShotKillRate: rate((r) => r.oneShotKill),
-    policy: POLICY,
+    targetPolicy: meta.targetPolicy,
+    policy: policyText(meta.targetPolicy),
     warnings: [],
   };
 

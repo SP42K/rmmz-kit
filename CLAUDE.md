@@ -407,30 +407,30 @@ The one thing that is a judgement call and not an engine port is action *selecti
 MZ leaves that to the player — so the chosen policy is heuristic and is echoed back in the
 report's `policy` field, because a party that never heals loses fights a real player wins.
 
-**M6's acceptance criterion is not met, and cannot be met from inside this repo.** The plan (§3 M6)
-asks for "對 MZ 內建範例的幾組敵我配置，模擬勝率與實際遊戲測試誤差 < 10%", which needs three
-things this repo does not have and cannot legally or practically acquire on its own:
+**M6's acceptance criterion has now been measured, and it is met at the ends and missed in the
+middle.** The plan (§3 M6) asks for "對 MZ 內建範例的幾組敵我配置，模擬勝率與實際遊戲測試誤差
+< 10%". That comparison was finally run — a licensed MZ install supplied both halves it needs (the
+sample project's real database, and a real playtest of the same six matchups) — and the result
+splits cleanly:
 
-1. **MZ's sample project database.** The built-in Actors/Classes/Enemies/Troops/Skills rows are
-   shipped with the (paid, licensed) editor — `fixtures/minimal-project` is a hand-written minimal
-   project, so its numbers are plausible, not RPG Maker's. Simulating a fixture matchup and
-   comparing it to itself measures nothing.
-2. **A real playtest to compare against.** The right-hand side of "誤差 < 10%" is a human (or M8's
-   headless runtime, which is M8) playing those same matchups enough times for a win rate to mean
-   something. There is no runtime here yet — that is precisely what M6 was scheduled *before*.
-3. **Agreement on the parts MZ leaves to the player.** A win rate is a function of action policy as
-   much as of damage math; a party that never heals loses fights a human wins. `BattleReport.policy`
-   states the policy this simulator used, so a future comparison is at least apples-to-apples.
+- **Lopsided matchups: within budget.** Where a side wins nearly always or nearly never, simulated
+  and played win rates agree to a few points. The ported arithmetic is right; that is what
+  `test/action.test.ts` pins from the other direction with exact hand-computed damage (formula
+  evaluation, element rate, guard division, the variance band's bounds, and MZ's own "broken
+  formula evaluates to 0" contract).
+- **Close matchups: 3 of 6 outside 10%.** The divergence is not in the damage math. It came from
+  exactly two things, both now addressed: `attackTimesAdd` was not counted, so a party wielding
+  MZ's own Cestus swung once instead of twice (F8 — **fixed**, see above); and target selection is
+  uniform random here while a real player focuses fire, worth +15.3pp on the evenly-matched pair
+  (F7 — *not* modeled, but no longer hidden: `targetPolicy: 'random' | 'focus'` brackets it and
+  `BattleReport.policy` names which one produced the numbers).
 
-What is verified instead is the half that is checkable without a game, and it is the half a 10%
-drift would come from: exact hand-computed damage for known params — formula evaluation, element
-rate, guard division, the variance band's bounds — plus MZ's own "broken formula evaluates to 0"
-contract (`test/action.test.ts`). If the ported arithmetic is right, the remaining error is policy
-and unmodeled features, both listed above and in `battler.ts`.
-
-To close it later: point `simulate()` at a real MZ project (it takes any `ProjectSession`), run the
-same matchups in M8's headless runtime once that exists, and compare win rates. No change to this
-package should be needed — which is why it is listed here rather than left as a TODO in code.
+So the honest statement of where this stands is: the engine port is verified against a real game,
+the two known policy gaps are named in the report rather than buried, and what remains unclosed is
+`Game_Action.evaluate()` — modelling every skill's value to every battler, which is L5-scale work
+and deliberately not attempted. One methodology note worth keeping, because it cost a round of
+bad data: `changeLevel` does not unlearn skills, so a "level 1" party recreated by demoting a
+level 2 one keeps its level 2 skills and wins fights it should lose. Recreate the actors instead.
 
 The fixture grew for this milestone: `fixtures/minimal-project/data/` gained Classes, Enemies,
 Troops, States, Weapons and Armors (a real MZ project always has them), and Skills 1/2 became
