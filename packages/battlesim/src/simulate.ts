@@ -179,7 +179,13 @@ function runBattle(
       const used = forced ? db.skills[ATTACK_SKILL_ID] ?? skill : skill;
       subject.gainMp(-used.mpCost); // Game_Battler.paySkillCost — no TP, see battler.ts
       const targets = forced ?? resolveTargets(rng, used, subject, allies, foes);
-      const repeats = Math.max(1, used.repeats);
+      // `Game_Action.numRepeats()`: the item's own repeats, plus the subject's
+      // attackTimesAdd for a *normal attack* only, floored. Max(1, ...) is this
+      // simulator's own guard against a data row with repeats 0 or missing.
+      const repeats = Math.max(
+        1,
+        Math.floor(used.repeats + (used.id === ATTACK_SKILL_ID ? subject.attackTimesAdd() : 0))
+      );
       for (let i = 0; i < repeats; i++) {
         for (const target of targets) {
           if (target.isDead() && used.scope !== 9 && used.scope !== 10) continue;

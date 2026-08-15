@@ -395,8 +395,15 @@ Three files, in the order data flows through them:
 - `simulate.ts` — the turn loop (turn-based, never TPB), the trial runner and the aggregation.
 
 `battler.ts` and `action.ts` each carry an explicit list of what is *not* modeled (buffs/debuffs,
-TP, extra action times, counter/reflect/substitute, dual wield) rather than approximating it
-silently. The one thing that is a judgement call and not an engine port is action *selection* —
+TP, extra **action** times, counter/reflect/substitute, dual wield) rather than approximating it
+silently. That list used to say "extra action times (trait 34)", conflating two different
+mechanics under one line — and the one it named the wrong code for turned out to matter: extra
+**attack** times (`TRAIT_ATTACK_TIMES`, 34, `Game_Action.numRepeats` adding
+`subject.attackTimesAdd()` to a normal attack) is carried by MZ's own stock Cestus, so a party
+equipped from the default database swings twice and this simulator had it swinging once. That
+was most of the worst divergence a real playtest found (8.10 simulated turns against 5.47 played,
+report §6/§8 F8) and is now modeled. Extra *action* times is trait 61, is rare, and is still not.
+The one thing that is a judgement call and not an engine port is action *selection* —
 MZ leaves that to the player — so the chosen policy is heuristic and is echoed back in the
 report's `policy` field, because a party that never heals loses fights a real player wins.
 

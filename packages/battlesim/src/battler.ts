@@ -26,7 +26,13 @@ import type { Rng } from './rng.js';
  * - buffs/debuffs (`paramBuffRate`, trait 12 / effects 31–34) — every param is
  *   read at its unbuffed value;
  * - TP entirely (no TP costs, no `tpGain`, no TP-triggered enemy actions);
- * - extra action times (trait 34) — every battler acts exactly once per turn;
+ * - extra **action** times (`TRAIT_ACTION_PLUS`, 61 — `makeActionTimes`'s
+ *   per-slot probability roll): every battler still takes exactly one action
+ *   per turn. Extra **attack** times (`TRAIT_ATTACK_TIMES`, 34) *are* modeled,
+ *   see `attackTimesAdd` — the two used to be conflated here as one unmodeled
+ *   item, and they are not the same mechanic: 34 adds hits to a normal attack
+ *   and every stock claw/cestus carries it, 61 adds whole actions and almost
+ *   nothing does (report §8 F8);
  * - counter/reflect/substitute (sparams cnt/mrf, trait 63) and dual wield;
  * - equip slots beyond "slot 0 is the weapon, the rest are armor".
  *
@@ -43,6 +49,7 @@ const TRAIT_PARAM = 21;
 const TRAIT_XPARAM = 22;
 const TRAIT_SPARAM = 23;
 const TRAIT_ATTACK_ELEMENT = 31;
+const TRAIT_ATTACK_TIMES = 34;
 
 /** Fixed ids MZ hardcodes in `Game_BattlerBase` rather than storing in System.json. */
 export const DEATH_STATE_ID = 1;
@@ -201,6 +208,20 @@ export class Battler {
 
   attackElements(): number[] {
     return [...new Set(this.traits(TRAIT_ATTACK_ELEMENT).map((trait) => trait.dataId))];
+  }
+
+  /**
+   * `Game_BattlerBase.attackTimesAdd()` — extra hits added to a *normal attack*
+   * only (`Game_Action.numRepeats`), never to a skill. Floored at 0 the way MZ
+   * floors it, so a negative trait cannot subtract the one guaranteed hit.
+   *
+   * Not an optional refinement: MZ's own stock Cestus carries +1, so a party
+   * equipped from the default database hits twice per attack. Ignoring it put
+   * the simulator 2.6 turns above a real playtest on the one matchup where it
+   * mattered (report §6/§8 F8).
+   */
+  attackTimesAdd(): number {
+    return Math.max(this.traitsSum(TRAIT_ATTACK_TIMES, 0), 0);
   }
 
   isStateAffected(stateId: number): boolean {
