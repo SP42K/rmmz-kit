@@ -214,6 +214,19 @@ see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
   idempotent (`decompile(compile(x))` is stable) but not always byte-identical
   to arbitrary pre-existing data — see `decompile.test.ts`'s fixture test.
 
+Both of those were finally measured rather than assumed: running the compiler
+over MZ's own `samplemaps` + `newdata` on a licensed machine (2498 real command
+lists, report §5) put byte-identity at **97.4%**, and named every difference.
+68 were the 205 mirror count — the editor writes one 505 per route *step* and
+none for the trailing ROUTE_END, where this wrote one for the terminator too
+and so pushed every following command a row down in the editor's event list
+(report §5.4 F6, fixed). 5 were the Conditional Branch filler above, which is
+now a deliberate normalization: those lists come back semantically identical,
+not byte-identical. The rest is the canonical-parameter-array rule. The corpus
+itself is KADOKAWA's and is **not** in this repo — `test/editorShapes.test.ts`
+is a hand-written minimal reproduction of each shape, so re-measuring the
+percentage needs an installed copy.
+
 ### L4 validator (`packages/validate`)
 
 `validateProject(session)` (`src/index.ts`) runs three independent rule groups (plan §4.4) and

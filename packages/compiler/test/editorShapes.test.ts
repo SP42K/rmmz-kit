@@ -90,4 +90,76 @@ describe('shapes the editor writes', () => {
       ]);
     });
   });
+
+  /**
+   * F6. The editor writes one 505 mirror row per route *step*, and none for the
+   * route's trailing ROUTE_END. This wrote one for the terminator too, so every
+   * emitted route pushed the following commands one row down and left a blank
+   * line in the editor's event list — 68 of 2498 real lists differed, all of
+   * them exactly this.
+   */
+  describe('505 mirror rows for a Set Movement Route (F6)', () => {
+    // The shape of newdata-2/Map002.json#event 12 page 1: an SE, a route on the
+    // player whose `list` is 7 long (6 steps + ROUTE_END) mirrored by 6 rows, a
+    // 2-long route on this event mirrored by 1, then an SE and a transfer —
+    // 13 commands, where this compiler used to write 15.
+    // 1/2/3/4 = move down/left/right/up, 17 = move forward, 41/42 = turn.
+    const se = { name: 'Move1', volume: 90, pitch: 100, pan: 0 };
+    const playerSteps = [1, 1, 17, 17, 4, 41];
+    const eventSteps = [42];
+    const route = (steps: number[]) => ({
+      list: [...steps.map((code) => ({ code, indent: null })), { code: 0, indent: null }],
+      repeat: false,
+      skippable: false,
+      wait: true,
+    });
+    const mirrors = (steps: number[]): EventCommand[] =>
+      steps.map((code) => ({ code: 505, indent: 0, parameters: [{ code, indent: null }] }));
+    const editorList: EventCommand[] = [
+      { code: 250, indent: 0, parameters: [se] },
+      { code: 205, indent: 0, parameters: [-1, route(playerSteps)] },
+      ...mirrors(playerSteps),
+      { code: 205, indent: 0, parameters: [0, route(eventSteps)] },
+      ...mirrors(eventSteps),
+      { code: 250, indent: 0, parameters: [se] },
+      { code: 201, indent: 0, parameters: [0, 4, 8, 6, 0, 0] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+
+    it('round-trips byte-identically', () => {
+      // 13 commands, not 15: one 505 per step, none for the two ROUTE_ENDs.
+      expect(editorList).toHaveLength(13);
+      expect(JSON.stringify(compile(decompile(editorList)))).toBe(JSON.stringify(editorList));
+    });
+
+    it('emits one mirror row per step, never one for the terminator', () => {
+      const emitted = compile([
+        { kind: 'moveRoute', characterId: -1, repeat: false, skippable: false, wait: true, route: [{ code: 1 }, { code: 4 }] },
+      ]);
+
+      const [head, ...rest] = emitted;
+      expect(head.code).toBe(205);
+      expect((head.parameters[1] as { list: unknown[] }).list).toHaveLength(3); // two steps + ROUTE_END
+      expect(rest.filter((c) => c.code === 505).map((c) => c.parameters[0])).toEqual([
+        { code: 1, indent: null },
+        { code: 4, indent: null },
+      ]);
+    });
+
+    it('still decompiles a list that mirrors the terminator too', () => {
+      // What this compiler itself wrote before the fix: a project already
+      // carrying those lists must keep opening, and re-emitting must drop the
+      // extra row rather than accumulate one per edit.
+      const withExtra: EventCommand[] = [
+        { code: 205, indent: 0, parameters: [-1, route([1, 4])] },
+        ...[1, 4, 0].map((code) => ({ code: 505, indent: 0, parameters: [{ code, indent: null }] })),
+        { code: 0, indent: 0, parameters: [] },
+      ];
+
+      const emitted = compile(decompile(withExtra));
+
+      expect(emitted.filter((c) => c.code === 505)).toHaveLength(2);
+      expect(compile(decompile(emitted))).toEqual(emitted);
+    });
+  });
 });

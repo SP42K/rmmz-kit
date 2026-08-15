@@ -70,6 +70,10 @@ describe('Tier 2 command shapes', () => {
     ]);
   });
 
+  // One mirror row per *step*, none for the ROUTE_END the route list itself
+  // ends with — that is what the editor writes (report §5.4 F6), and the extra
+  // row this used to emit pushed every following command down a line in the
+  // editor's event list.
   it('mirrors a movement route into 505 rows and terminates it with ROUTE_END', () => {
     const commands = compile([
       {
@@ -102,7 +106,6 @@ describe('Tier 2 command shapes', () => {
       },
       { code: 505, indent: 0, parameters: [{ code: 2, indent: null }] },
       { code: 505, indent: 0, parameters: [{ code: 45, indent: null, parameters: ['this.setOpacity(0)'] }] },
-      { code: 505, indent: 0, parameters: [{ code: 0, indent: null }] },
     ]);
   });
 

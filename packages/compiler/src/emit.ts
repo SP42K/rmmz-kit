@@ -19,7 +19,19 @@ const VARIABLE_OPS: Record<'set' | 'add' | 'sub' | 'mul' | 'div' | 'mod', number
   mod: 5,
 };
 
-/** Compiles a page/common-event's full command list, including the trailing terminator. */
+/**
+ * Compiles a page/common-event's full command list, including the trailing
+ * terminator.
+ *
+ * `decompile(compile(x))` is stable, but `compile(decompile(y))` is not always
+ * byte-identical to `y` — this always writes a command's full canonical
+ * parameter array, and it normalizes one shape the editor writes and the
+ * interpreter ignores: a `{code:0}` filler ending a Conditional Branch body
+ * (report §5.3 F5) is consumed on the way in and not written back. Measured
+ * against MZ's own `samplemaps` + `newdata` (2498 command lists), that is where
+ * the remaining difference is: 68 lists differed on the 205 mirror count, which
+ * is now fixed (see the moveRoute case), and 5 on this filler.
+ */
 export function compile(nodes: Node[]): EventCommand[] {
   const out: EventCommand[] = [];
   emitList(nodes, 0, out);
@@ -142,12 +154,17 @@ function emitNode(node: Node, indent: number, out: EventCommand[]): void {
     case 'moveRoute': {
       const route = buildMoveRoute(node);
       out.push({ code: 205, indent, parameters: [node.characterId, route] });
-      // The 505 mirror rows: one per route step, terminator included. The
-      // interpreter ignores them, the editor renders from them — omitting them
-      // makes a route the game runs but the editor shows as a blank line.
-      // Copied, not aliased: the same object in both the 205's route and a 505
-      // means mutating one silently mutates the other (see the RawNode case).
-      for (const step of route.list) out.push({ code: 505, indent, parameters: [{ ...step }] });
+      // The 505 mirror rows: one per route step, **excluding** the trailing
+      // ROUTE_END. The interpreter ignores them (`command505` is a no-op), the
+      // editor renders its event list from them — omitting them entirely makes
+      // a route the game runs but the editor shows as a blank line, and writing
+      // one for the terminator too (what this did until report §5.4 F6 counted
+      // the editor's own output: 68 of 2498 real lists differed, all of them
+      // this) shifts every following command down a row and leaves a blank line
+      // in the editor. Copied, not aliased: the same object in both the 205's
+      // route and a 505 means mutating one silently mutates the other (see the
+      // RawNode case).
+      for (const step of route.list.slice(0, -1)) out.push({ code: 505, indent, parameters: [{ ...step }] });
       return;
     }
 
