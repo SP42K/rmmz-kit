@@ -247,7 +247,13 @@ returns a flat `Finding[]` (`rule`, `severity`, `message`, `file`, `path?`) — 
 callers filter by `severity`/`rule` themselves:
 - `rules/structure.ts` — reuses `@rmmz-kit/compiler`'s `decompile()` as the structural check
   (it already throws on every 111/412, 112/413, 102/402/403/404, 301/604 pairing or indent
-  mistake) instead of re-deriving bracket-matching; adds only what `decompile()` deliberately
+  mistake) instead of re-deriving bracket-matching. **That reuse is a coupling in both
+  directions**: anything `decompile()` learns to tolerate stops being reported here, so a change
+  to it is a change to this rule and belongs in the same review. The one made so far is the
+  branch-body `{code:0}` filler (F5) — see `consumeOptionalFiller`'s doc comment for why giving
+  up that finding costs nothing (`Game_Interpreter` steps straight past a code 0, so the rule was
+  naming something that cannot misbehave, and was firing on 5 of 2498 real lists) and for what is
+  still caught. It adds only what `decompile()` deliberately
   doesn't catch (an orphan continuation — 401/408, and since M7.5 505/605/655 — and a 113 Break
   Loop outside any 112 Loop).
 - `rules/references.ts` — dangling item/actor/commonEvent/map ids (via `RefIndex.entries()`,

@@ -430,6 +430,22 @@ function stripRouteEnd(list: MoveRoute['list']): MoveStep[] {
  *
  * emit.ts deliberately does *not* write it back outside 402/403 — see the
  * byte-identity note in ir.ts.
+ *
+ * **The risk this accepts, written down because it is not local to this file.**
+ * `validate`'s `rules/structure.ts` uses `decompile()` throwing *as* its
+ * bracket-matching check, so anything tolerated here stops being reported
+ * there. What is given up is a finding on a stray code-0 inside a body — and
+ * that finding could never have been worth acting on: `Game_Interpreter` has no
+ * handler for code 0, `executeCommand` steps straight past it, so such a list
+ * cannot misbehave at runtime. On real editor output the rule was firing on 5
+ * of 2498 lists, all false. Trading a report that names nothing for a map that
+ * opens is the right direction.
+ *
+ * What is deliberately *not* given up: only **one** filler is consumed. A body
+ * with a filler followed by more deeply-indented commands still fails — the
+ * caller's `expect` sees the next command instead of its closer (111/112), and
+ * in `pushRaw`'s case the outer `parseBlock` refuses a command indented deeper
+ * than expected. Anything genuinely mis-nested is still caught.
  */
 function consumeOptionalFiller(cmds: EventCommand[], pos: number, indent: number): number {
   const cmd = cmds[pos];
