@@ -179,16 +179,20 @@ roadmap is `docs/rmmz-automation-implementation-plan.md` (Chinese).
 
 Milestones M0–M11 are delivered — see `CLAUDE.md` for what each one covers.
 
-Several acceptance criteria are **unmet by construction rather than by neglect**: they need
-something this repo cannot contain. Each is written up honestly where it lives, and none of
-them needs a source change to close (plan §8.3):
+Several acceptance criteria used to be **unmet by construction rather than by neglect**,
+because they need something this repo cannot contain. Most of those were finally run on a
+machine with a licensed MZ 1.9.x install, which changed the table rather than just ticking
+it — and turned up eight real defects, one of which was that `create_project`'s own output
+could not boot. Each is written up where it lives; the full status is plan §8.3.
 
-| Gap | Needs |
+| Gap | Status |
 |---|---|
-| Battle sim within 10% of real play | MZ's sample database + a real playthrough to compare against |
-| Driving `window.__AT` from a browser | The MZ runtime (paid) |
-| Repair-rate and one-sentence→spec numbers | A real model in the loop — in this architecture the model is the MCP client, not this process |
-| Deployed build playable / project opens in editor | The engine and editor (paid) |
+| Battle sim within 10% of real play | **Partly disproved.** Fine at the ends, outside 10% on 3 of 6 close matchups. Not the damage math: extra attack times (now modelled) and target selection (now disclosed, and bracketed by `targetPolicy: 'random' \| 'focus'`) |
+| Driving `window.__AT` from a browser | **Closed**, over CDP — after fixing two bugs that made the plugin a silent no-op under any driver. `waitIdle` is now async |
+| Compiler output matches the editor byte for byte | **Closed and quantified**: 97.4% over 2498 real editor-written command lists, with every difference named and two of them fixed |
+| Deployed build playable in a browser | **Closed** — served and loaded. Use `startPlaytestServer(root)`, not the `playtest` tool: a build has no project marker for `openProject` to find |
+| Project opens in the editor | Still open, and needs a human at the GUI |
+| Repair-rate and one-sentence→spec numbers | Still open — needs a real model in the loop, which in this architecture is the MCP client, not this process |
 
 `compose_map` generates dungeon-shaped maps — connected rooms and corridors. Towns,
 exteriors and anything with an art direction are `paint_tiles` plus a human (or the
@@ -197,3 +201,10 @@ editor); the BSP generator was never meant to fake either.
 The headless scenario runner covers the event layer, not rendering, movement or TPB timing.
 Anything it does not model increments an `unmodeled` counter in its report instead of being
 skipped silently — a green run with a non-empty `unmodeled` proved less than it looks.
+
+It also does not model **battle rewards**. A Battle Processing outcome is answered from
+`answerBattles`, not fought, so the gold, EXP, drops and level-ups MZ pays out on a win never
+land: a scenario asserting "the player can afford the sword after the fight" is asserting
+about a party that was never paid. A report whose run won a battle says so in `notes` — kept
+separate from `unmodeled`, which has to keep meaning "something was skipped". Damage and win
+rates are `simulate_battle`'s question.

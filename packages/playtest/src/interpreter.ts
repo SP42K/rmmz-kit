@@ -64,6 +64,16 @@ export class Interpreter {
   readonly state: GameState;
   /** Commands this layer does not model, deduped; a scenario passing while this is non-empty is a scenario that proved less than it looks. */
   readonly unmodeled = new Map<string, number>();
+  /**
+   * Caveats about what *did* run, as opposed to `unmodeled`'s list of what did
+   * not. A command can be modelled at the event layer and still have a side
+   * effect this layer has no way to produce — a won Battle Processing being the
+   * one that matters, since MZ pays out gold/EXP/drops there and the outcome
+   * here is told, not fought. Deliberately not folded into `unmodeled`: that
+   * counter means "the scenario proved less than it looks", and a generated game
+   * with one boss fight would trip it every time and teach a reader to ignore it.
+   */
+  readonly notes = new Set<string>();
   readonly pluginCalls: PluginCall[] = [];
   readonly battles: BattleCall[] = [];
 
@@ -293,6 +303,14 @@ export class Interpreter {
       case 'battle': {
         const outcome = this.battleQueue.shift() ?? 'win';
         this.battles.push({ troopId: node.troopId, outcome });
+        // A won battle in MZ pays out gold, EXP, drops and possibly a level-up
+        // before the 601 body runs. None of that happens here — the outcome is
+        // *told* to this layer, not fought — so a scenario asserting "the player
+        // can afford the sword after the fight" is asserting about a party that
+        // was never paid.
+        if (outcome === 'win') {
+          this.notes.add('Battle rewards (gold, EXP, drops, level-up) are not modelled — the outcome is answered, not fought.');
+        }
         if (node.designation !== 0) this.note('Battle Processing with a variable/random troop (301)');
         const branch = outcome === 'win' ? node.win : outcome === 'escape' ? node.escape : node.lose;
         // An absent branch means MZ wrote no 60x for it — usually because

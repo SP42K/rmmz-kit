@@ -252,6 +252,29 @@ describe('event-layer interpreter', () => {
 
     expect(interpreter.battles).toEqual([{ troopId: 1, outcome: 'lose' }]);
     expect(interpreter.state.messages.map((m) => m.lines[0])).toEqual(['lost']);
+    // A lost battle pays nothing, so there is nothing to disclaim.
+    expect([...interpreter.notes]).toEqual([]);
+  });
+
+  it('notes that a won battle paid no rewards, without calling the command unmodeled', () => {
+    putEvent(session, 1, {
+      id: 2,
+      pages: [{ dsl: '- battle: { troopId: 1, canEscape: false, canLose: false, win: [{ say: "won" }] }' }],
+    });
+
+    const interpreter = new Interpreter(session, undefined, { battles: ['win'] });
+    interpreter.runEvent(1, 2);
+
+    // The outcome is *told* to this layer, not fought, so gold/EXP/drops/level
+    // never land — and a scenario asserting "the player can afford the sword
+    // after the fight" is asserting about a party that was never paid.
+    expect([...interpreter.notes]).toEqual([
+      'Battle rewards (gold, EXP, drops, level-up) are not modelled — the outcome is answered, not fought.',
+    ]);
+    // Not `unmodeled`: the command ran and picked the right branch. That
+    // counter has to keep meaning "something was skipped", or a generated game
+    // with one boss fight would trip it every run and teach a reader to ignore it.
+    expect([...interpreter.unmodeled.keys()]).toEqual([]);
   });
 
   it('counts coverage over every command list in the project, not only the ones it ran', () => {

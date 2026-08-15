@@ -60,6 +60,18 @@ file's transfer still points at the map). `deploy` grew `target: "macos"`
 codesigned and the report says so). The §8.1-1 tail (expression language,
 `!`/`&&`) remains not started.
 
+**The plan's §8.3 "needs a licensed machine" batch has been run** (2026-08, MZ 1.9.x on
+Windows). It did not simply tick boxes: it produced eight defects, all now fixed or explicitly
+bounded, and it rewrote three acceptance claims. The boot crash in `create_project`'s own output
+(F2), the two shapes the editor writes that `decompile`/`emit` got wrong (F5/F6 — byte-identity
+is now a measured 97.4% over 2498 real command lists rather than an assumption), the two bugs
+that made `AutoTest.js` a silent no-op under any driver (F3/F4), and the two causes of the
+battle simulator's divergence from real play (F8 fixed, F7 bounded by `targetPolicy`) are each
+written up in their own section below; plan §8.3 carries the per-gap status table. The corpus
+and the report live in `verify-tmp/`, which is **not** in the repo — MZ's sample content is
+KADOKAWA's, so every fixture added for this work is a hand-written reproduction of a recorded
+*shape*, and re-measuring those percentages needs an installed copy.
+
 ## Commands
 
 ```bash
@@ -545,7 +557,11 @@ Four modules plus one plugin, in the order data flows:
   `unmodeled` proved less than it looks** — that counter is the difference between a fallback and
   a fake. Plugin commands are recorded, not run, so a project whose rewards go through a plugin
   can still be asserted on. A runaway loop hits a command budget and throws, which is the one
-  softlock class this layer genuinely catches.
+  softlock class this layer genuinely catches. One thing that *is* modelled and still has an
+  unmodelled side effect gets its own channel: a won Battle Processing pays no gold, EXP, drops
+  or level-up here, because the outcome was answered rather than fought. That lands in `notes`,
+  not `unmodeled` — `unmodeled` has to keep meaning "a command was skipped", and a generated
+  game with one boss fight would trip it every run and teach a reader to ignore it.
 - `scenario.ts` — the agent-facing surface: a scenario is *data* (steps + assertions), and the
   report says which check failed with expected/actual, what was shown, the final state and the
   coverage. That shape is chosen for M9's repair loop, which needs a failure trajectory rather
@@ -802,9 +818,21 @@ fetched back with the right title, with `Game.rmmzproject` 404ing (same file). P
 from both ends — a referenced face survives, an unreferenced one and an unreferenced SE do not, an
 `img/system/` file survives being referenced by nothing, and a filename that appears only as a bare
 positional parameter of a Show Picture command survives (that case is what a keyed-fields-only
-collector would delete). To close the rest: run `create_project --runtimeFrom <an installed
-project>` on a licensed machine, open the result in the editor, then `deploy` it and play it.
-Nothing in `src/` should need to change.
+collector would delete).
+
+**The browser half is now closed, and closing it cost a fix.** That run happened
+(`create_project --runtimeFrom` against a licensed 1.9.x install, then `deploy`, then the build
+served and loaded in a browser). The build half works. The *created project* half did not: its
+System.json was missing `titleCommandWindow`, so the game died in `Scene_Title` before drawing
+anything — report §8 F2, fixed above, and the reason the template now has a README naming every
+field the engine dereferences without a guard. Two corrections to how the run is done, both
+worth writing down: the **`playtest` tool cannot serve a deploy output** (`openProject` requires
+the project marker, which `deploy` deliberately excludes) — use `startPlaytestServer(rootPath)`
+directly; and MZ 1.9.x writes that marker **lowercase**, `game.rmmzproject`.
+
+What is still not closed: opening the created project in the editor, which needs a human in
+front of the GUI, and the same for the Windows executable and the macOS bundle. Nothing in
+`src/` should need to change for any of them.
 
 ### Namespaces and DSL name sugar (§8.1-1)
 
