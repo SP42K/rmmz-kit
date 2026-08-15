@@ -92,12 +92,12 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
         pos++;
         const condition = readCondition(cmd.parameters);
         const thenResult = parseBlock(cmds, pos, indent + 1);
-        pos = thenResult.pos;
+        pos = consumeOptionalFiller(cmds, thenResult.pos, indent + 1);
         let elseNodes: Node[] | undefined;
         if (cmds[pos]?.code === 411 && cmds[pos].indent === indent) {
           pos++;
           const elseResult = parseBlock(cmds, pos, indent + 1);
-          pos = elseResult.pos;
+          pos = consumeOptionalFiller(cmds, elseResult.pos, indent + 1);
           elseNodes = elseResult.nodes;
         }
         expect(cmds, pos, 412, indent);
@@ -149,7 +149,7 @@ function parseBlock(cmds: EventCommand[], pos: number, indent: number): { nodes:
       case 112: {
         pos++;
         const result = parseBlock(cmds, pos, indent + 1);
-        pos = result.pos;
+        pos = consumeOptionalFiller(cmds, result.pos, indent + 1);
         expect(cmds, pos, 413, indent);
         pos++;
         nodes.push({ kind: 'loop', body: result.nodes });
@@ -382,7 +382,7 @@ function pushRaw(nodes: Node[], cmds: EventCommand[], pos: number, indent: numbe
   const next = cmds[pos];
   if (next && next.indent === indent + 1 && !CLOSERS.has(next.code)) {
     const result = parseBlock(cmds, pos, indent + 1);
-    pos = result.pos;
+    pos = consumeOptionalFiller(cmds, result.pos, indent + 1);
     node.body = result.nodes;
   }
   nodes.push(node);
@@ -412,7 +412,25 @@ function stripRouteEnd(list: MoveRoute['list']): MoveStep[] {
   return steps.map((step) => (step.parameters ? { code: step.code, parameters: [...step.parameters] } : { code: step.code }));
 }
 
-/** Choice/cancel branches end with an optional `{code:0}` filler (see ChoiceNode doc in ir.ts) — consume it if present. */
+/**
+ * Any structural body may end with a `{code:0}` filler at the body's own indent
+ * — consume it if present.
+ *
+ * Choice/cancel branches were the known case (see ChoiceNode's doc in ir.ts,
+ * inferred from `fixtures/minimal-project`). Running this compiler over MZ's own
+ * `samplemaps` and `newdata` for the first time found the editor writing the
+ * same filler at the end of a **Conditional Branch** body (report §5.3 F5): five
+ * of 2498 real command lists ended a 111 or 411 body with one, and every one of
+ * them threw `Expected code 412 ... got code 0` — which takes down
+ * `rmmz://map/{id}` for the whole map, not just the event. So the tolerance is
+ * applied to every body a block parser opens (111/411, 112, and a RawNode's
+ * absorbed body) rather than enumerated per code: the filler is a no-op to
+ * `Game_Interpreter` wherever it appears, so accepting one costs nothing and
+ * refusing one costs a map.
+ *
+ * emit.ts deliberately does *not* write it back outside 402/403 — see the
+ * byte-identity note in ir.ts.
+ */
 function consumeOptionalFiller(cmds: EventCommand[], pos: number, indent: number): number {
   const cmd = cmds[pos];
   return cmd && cmd.code === 0 && cmd.indent === indent ? pos + 1 : pos;

@@ -200,7 +200,13 @@ see plan §6 R1), both isolated to `ir.ts`'s doc comments and `emit.ts`:
 - Every Show Choices branch (402/403 body) always emits a trailing
   `{code:0}` filler at the branch's indent — inferred from
   `fixtures/minimal-project`, the only ground truth available; decompile
-  treats the filler as optional (present or not) rather than required.
+  treats the filler as optional (present or not) rather than required. The
+  licensed-machine run found the editor writing that same filler at the end of
+  **Conditional Branch** bodies too (report §5.3 F5), where decompile threw and
+  took down `rmmz://map/{id}` for the whole map. It is now consumed wherever a
+  block parser opens a body — 111/411, 112, and a RawNode's absorbed body — and
+  still written back only for 402/403, since `Game_Interpreter` skips a code-0
+  wherever it appears.
 - `emit.ts` always writes the full canonical parameter array for a command
   (e.g. Show Choices' 5-element `[choices, cancelType, defaultType,
   positionType, background]`), even when decompiling data that had a

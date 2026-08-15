@@ -82,6 +82,13 @@ export interface CommentNode {
  * still compiles, just via `RawCondition`, which stores the 111 parameter
  * array verbatim — full Conditional Branch support without modeling all ~15
  * condition types up front.
+ *
+ * The editor sometimes ends a then/else body with a `{code:0}` filler at the
+ * body's indent, the same one it writes inside every choice branch (report §5.3
+ * F5, found in MZ's own `samplemaps`/`newdata`). `Game_Interpreter` skips a
+ * code-0 wherever it appears, so decompile consumes one if present and emit
+ * never writes one back: a list like that round-trips to a *semantically*
+ * identical list, not a byte-identical one. See `compile`'s note in emit.ts.
  */
 export interface IfNode {
   kind: 'if';
